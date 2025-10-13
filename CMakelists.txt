@@ -1,0 +1,64 @@
+cmake_minimum_required(VERSION 3.12)
+
+project(3Drenderer)
+
+if(MSVC)
+
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+file(GLOB_RECURSE MY_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+add_executable(${CMAKE_PROJECT_NAME} ${MY_SOURCES})
+
+target_sources("${CMAKE_PROJECT_NAME}" PRIVATE "${MY_SOURCES}")
+
+target_include_directories("${CMAKE_PROJECT_NAME}" PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/")
+set(LVK_WITH_SAMPLES OFF CACHE BOOL "Disable LVK Samples")
+set(LVK_WITH_GLFW ON CACHE BOOL "Enable LVK's internal GLFW")
+set(LVK_WITH_VULKAN_PORTABILITY ON CACHE BOOL "Enable Vulkan portability subset")
+set(CMAKE_TOOLCHAIN_FILE "D:/dev/vcpkg/vcpkg/scripts/buildsystems/vcpkg.cmake")
+
+#find_package(glfw3 CONFIG REQUIRED)
+find_package(assimp CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(glslang CONFIG REQUIRED)
+find_package(volk CONFIG REQUIRED)
+find_package(meshoptimizer CONFIG REQUIRED)
+find_package(gli CONFIG REQUIRED)
+find_package(rapidjson CONFIG REQUIRED)
+find_package(taskflow CONFIG REQUIRED)
+find_package(bullet CONFIG REQUIRED)
+find_package(ImGuizmo CONFIG REQUIRED)
+find_package(glad CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+find_package(Ktx CONFIG REQUIRED)
+
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "D:/dev/vcpkg/vcpkg/installed/x64-windows/include")
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lightweightvk)
+target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC 
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/lightweightvk/src"
+)
+#target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+file(GLOB_RECURSE MY_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h")
+
+target_sources("${CMAKE_PROJECT_NAME}" PRIVATE ${MY_SOURCES})
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE 
+LVKLibrary
+rapidjson
+assimp::assimp
+${BULLET_LIBRARIES}
+glfw
+glm::glm
+gli
+glslang::glslang glslang::glslang-default-resource-limits glslang::SPIRV glslang::SPVRemapper
+imguizmo::imguizmo
+meshoptimizer::meshoptimizer
+Taskflow::Taskflow
+volk::volk volk::volk_headers
+glad::glad
+imgui::imgui
+KTX::ktx
+)
