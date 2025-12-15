@@ -1,4 +1,9 @@
 /.vs
 PBR.bat
 /out
-#/external
+/external
+/data/kiara_1_dawn_8k_prefilter.ktx
+/data/empty_play_room_4k_prefilter.ktx
+/data/kiara_1_dawn_8k_charlie.ktx
+/data/empty_play_room_4k_charlie.ktx
+/data/glTf-Sample-Assets
