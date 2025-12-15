@@ -5,3 +5,10 @@ wont be explaining much, the build is straightforward using cmake, I do need to 
 anyway if you are keen to try download the glTF sample assets by khronos and some hdr images, might need to change all the paths as they are an absolute path
 
 this works on my machine :)
+
+some screenshots!
+![dragon dispersion]("data/screenshots/dragon_dispersion.png")
+![damaged_helmet]("data/screenshots/damaged_helmet.png")
+![a_beautiful_game]("data/screenshots/a_beautiful_game.png")
+![compare_ior]("data/screenshots/compare_ior.png")
+![chair]("data/screenshots/chair.png")
