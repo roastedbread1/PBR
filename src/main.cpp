@@ -49,7 +49,7 @@ int main()
 
 
     
-    std::string model = "DragonDispersion";
+    std::string model = "CompareIor";
 
     
     std::string gltfPath = "D:/codes/more codes/c++/PBR/data/glTF-Sample-Assets/Models/" + model + "/glTF/" + model + ".gltf";
