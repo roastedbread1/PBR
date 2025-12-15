@@ -1,19 +1,16 @@
 #include "vk_app.h"
 //#include <utils_gltf.h>
-
+#include <volk.h>
 #include <unordered_map>
 #include <algorithm>
 #include <vector>
+#include <imgui.h>
+#include <ImGuizmo.h>
 
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_vulkan.h>
+#include <implot.h>
 extern std::unordered_map<uint32_t, std::string> debugGLSLSourceCode;
-
-static void shaderModuleCallback(lvk::IContext*, lvk::ShaderModuleHandle handle, int line, int col, const char* debugName)
-{
-    const auto it = debugGLSLSourceCode.find(handle.index());
-    if (it != debugGLSLSourceCode.end()) {
-        lvk::logShaderSource(it->second.c_str());
-    }
-}
 
 
 static void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
@@ -85,6 +82,12 @@ static void glfw_key_callback(GLFWwindow* window, int key, int scancode, int act
 	}
 }
 
+static PFN_vkVoidFunction ImGui_Vulkan_Loader(const char* function_name, void* user_data)
+{
+	
+	VkInstance instance = (VkInstance)user_data;
+	return vkGetInstanceProcAddr(instance, function_name);
+}
 void init_app(App* app, const AppConfig* cfg)
 {
 	if (cfg)
@@ -100,35 +103,88 @@ void init_app(App* app, const AppConfig* cfg)
 
 	init_camera_first_person(&app->camera, app->cfg.initialCameraPos, app->cfg.initialCameraTarget, glm::vec3(0.0f, 1.0f, 0.0f));
 
-	minilog::initialize(nullptr, { .threadNames = false });
+	
 
-	int width = -95;
-	int height = -90;
+	int width = 1920;
+	int height = 1080;
 
-	app->window = lvk::initWindow("vulkan", width, height);
+	if (!glfwInit()) {
+		throw std::runtime_error("Failed to initialize GLFW");
+	}
+	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+	app->window = glfwCreateWindow(width, height, "Vulkan", nullptr, nullptr);
+	if (!app->window) {
+		glfwTerminate();
+		throw std::runtime_error("Failed to create GLFW window");
+	}
 	app->pipelineSamples = 1;
 
-		app->ctx = lvk::createVulkanContextWithSwapchain(
-		app->window, width, height,
-		{
-			.enableValidation = true,
-			.shaderModuleErrorCallback = &shaderModuleCallback,
-		});
+	VK_CHECK(volkInitialize());
+	create_instance(&app->vkInstance.instance);
+	volkLoadInstance(app->vkInstance.instance);
 
+	setup_debug_callbacks(app->vkInstance.instance, &app->vkInstance.messenger, &app->vkInstance.reportCallback);
+	VK_CHECK(glfwCreateWindowSurface(app->vkInstance.instance, app->window, nullptr, &app->vkInstance.surface));
+	if (!init_vulkan_render_device3(app->vkInstance, app->vkDev, width, height, VulkanContextFeatures{})) {
+		throw std::runtime_error("Failed to initialize Vulkan render device");
+	}
 	
-	
-	app->depthTexture = app->ctx->createTexture(
-		{
-			.type = lvk::TextureType_2D,
-			.format = lvk::Format_Z_F32,
-			.dimensions = {(uint32_t)width, (uint32_t)height},
-			.usage = lvk::TextureUsageBits_Attachment,
-			.debugName = "Debug Buffer",
-		}
-		);
+	if (!create_depth_resources(app->vkDev, width, height, app->depthTexture.image)) {
+		throw std::runtime_error("Failed to create depth resources");
+	}
+	RenderPassCreateInfo rpInfo = {};
+	render_pass_init(&rpInfo, false, false, eRenderPassBit_Last);
 
-	app->imgui = new lvk::ImGuiRenderer(*app->ctx, "D:/codes/more codes/c++/PBR/OpenSans-Light.ttf", 30.0f);
+	SwapchainSupportDetails details = query_swapchain_support(app->vkDev.physicalDevice, app->vkInstance.surface);
+	VkSurfaceFormatKHR surfaceFormat = choose_swap_surface_format(details.formats);
+
+	if (!create_color_and_depth_render_pass(app->vkDev, true, &app->gridRenderPass, rpInfo, surfaceFormat.format)) {
+		throw std::runtime_error("Failed to create main render pass");
+	}
+
+	create_swapchain_framebuffers(app);
+	create_sync_objects(app);
+
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
 	app->implotCtx = ImPlot::CreateContext();
+	ImGui::StyleColorsDark();
+
+	ImGui_ImplGlfw_InitForVulkan(app->window, false);
+
+	if (!create_descriptor_pool(app->vkDev, 100, 100, 100, &app->imguiDescriptorPool)) {
+		throw std::runtime_error("Failed to create ImGui descriptor pool");
+	}
+
+	// Store swapchain format for ImGui
+	SwapchainSupportDetails detailsImgui = query_swapchain_support(app->vkDev.physicalDevice, app->vkInstance.surface);
+	VkSurfaceFormatKHR surfaceFormatImgui = choose_swap_surface_format(detailsImgui.formats);
+	app->swapchainFormat = surfaceFormatImgui.format;
+
+	ImGui_ImplVulkan_InitInfo init_info = {};
+	init_info.Instance = app->vkInstance.instance;
+	init_info.PhysicalDevice = app->vkDev.physicalDevice;
+	init_info.Device = app->vkDev.device;
+	init_info.QueueFamily = app->vkDev.graphicsFamily;
+	init_info.Queue = app->vkDev.graphicsQueue;
+	init_info.DescriptorPool = app->imguiDescriptorPool;
+	init_info.MinImageCount = choose_swap_image_count(detailsImgui.capabilities);
+	init_info.ImageCount = (uint32_t)app->vkDev.swapchainImages.size();
+	init_info.CheckVkResultFn = [](VkResult err) { VK_CHECK(err); };
+
+	// Dynamic rendering setup
+	init_info.UseDynamicRendering = true;
+	init_info.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+	init_info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+	init_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &app->swapchainFormat;
+
+	uint32_t api_version = volkGetInstanceVersion();
+	if (api_version == 0) {
+		api_version = VK_API_VERSION_1_1;
+	}
+	ImGui_ImplVulkan_LoadFunctions(api_version, ImGui_Vulkan_Loader, app->vkInstance.instance);
+	ImGui_ImplVulkan_Init(&init_info);
+
 
 	glfwSetWindowUserPointer(app->window, app);
 	glfwSetMouseButtonCallback(app->window, glfw_mouse_button_callback);
@@ -139,25 +195,94 @@ void init_app(App* app, const AppConfig* cfg)
 
 void destroy_app(App* app)
 {
-	ImPlot::DestroyContext(app->implotCtx);
+	
 
-	app->gridPipeline = nullptr;
-	app->gridVert = nullptr;
-	app->gridFrag = nullptr;
-	app->depthTexture = nullptr;
+	vkDeviceWaitIdle(app->vkDev.device);
+	ImGui_ImplVulkan_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImPlot::DestroyContext(app->implotCtx); 
+	ImGui::DestroyContext();
 
-	delete app->imgui;
-	app->imgui = nullptr;
+	VkDevice device = app->vkDev.device;
+	for (int i = 0; i < app->inFlightFences.size(); i++) {
+        vkDestroyFence(device, app->inFlightFences[i], nullptr);
+        vkDestroySemaphore(device, app->renderFinishedSemaphores[i], nullptr);
+        vkDestroySemaphore(device, app->imageAvailableSemaphores[i], nullptr);
+    }
+	for (VkFramebuffer fb : app->swapchainFramebuffers) {
+		vkDestroyFramebuffer(device, fb, nullptr);
+	}
+
+	vkDestroyPipeline(device, app->gridPipeline, nullptr);
+	vkDestroyPipelineLayout(device, app->gridPipelineLayout, nullptr);
+	vkDestroyDescriptorSetLayout(device, app->gridDescriptorSetLayout, nullptr);
+	vkDestroyRenderPass(device, app->gridRenderPass, nullptr);
+
+	vkDestroyShaderModule(device, app->gridVert.shaderModule, nullptr);
+	vkDestroyShaderModule(device, app->gridFrag.shaderModule, nullptr);
+
+	destroy_vulkan_image(device, app->depthTexture.image);
+
+
+	vkDestroyDescriptorPool(device, app->imguiDescriptorPool, nullptr);
+	destroy_vulkan_render_device(app->vkDev);
+	destroy_vulkan_instance(app->vkInstance);
+
+
 
 	glfwDestroyWindow(app->window);
-
-
 	glfwTerminate();
+}
+
+void recreate_swapchain(App* app)
+{
+	VulkanRenderDevice& vkDev = app->vkDev;
+	vkDeviceWaitIdle(vkDev.device);
+
+	
+	for (auto fb : app->swapchainFramebuffers) {
+		vkDestroyFramebuffer(vkDev.device, fb, nullptr);
+	}
+	app->swapchainFramebuffers.clear();
+
+	for (auto iv : app->vkDev.swapchainImageViews) {
+		vkDestroyImageView(vkDev.device, iv, nullptr);
+	}
+	app->vkDev.swapchainImageViews.clear();
+	app->vkDev.swapchainImages.clear();
+
+	vkDestroySwapchainKHR(vkDev.device, app->vkDev.swapchain, nullptr);
+	destroy_vulkan_image(vkDev.device, app->depthTexture.image);
+
+	
+	int width, height;
+	glfwGetFramebufferSize(app->window, &width, &height);
+	while (width == 0 || height == 0) {
+	
+		glfwGetFramebufferSize(app->window, &width, &height);
+		glfwWaitEvents();
+	}
+	vkDev.framebufferWidth = (uint32_t)width;
+	vkDev.framebufferHeight = (uint32_t)height;
+
+
+	app->depthTexture.width = width;
+	app->depthTexture.height = height;
+	app->depthTexture.format = find_depth_format(vkDev.physicalDevice);
+
+
+	
+	VK_CHECK(create_swapchain(vkDev.device, vkDev.physicalDevice, app->vkInstance.surface, vkDev.graphicsFamily, width, height, &vkDev.swapchain));
+	create_swapchain_images(vkDev.device, vkDev.swapchain, vkDev.swapchainImages, vkDev.swapchainImageViews);
+	create_depth_resources(vkDev, width, height, app->depthTexture.image);
+
+	
+	create_swapchain_framebuffers(app);
 }
 
 void run_app(App* app, DrawFrameFunc drawFrame)
 {
-	LVK_PROFILER_FUNCTION();
+	
 
 	double timeStamp = glfwGetTime();
 	float deltaSeconds = 0.0f;
@@ -180,6 +305,9 @@ void run_app(App* app, DrawFrameFunc drawFrame)
 		if (!width || !height) { continue; }
 
 		const float ratio = width / (float)height;
+
+		bool blockMouse = ImGui::GetIO().WantCaptureMouse || ImGuizmo::IsUsing() || ImGuizmo::IsOver();
+		bool mouseActive = blockMouse ? false : app->mouseState.pressedLeft;
 
 		if (app->camera.positioner.type == CAMERA_POSITIONER_FIRST_PERSON) {
 			update_first_person(
@@ -212,7 +340,7 @@ void init_default_app(AppConfig* cfg)
 	cfg->showGLTFInspector = false;
 }
 
-void draw_grid_app(App* app, lvk::ICommandBuffer& buf, const glm::mat4 proj, const glm::vec3 origin, uint32_t numSamples, lvk::Format colorFormat)
+void draw_grid_app(App* app, VkCommandBuffer buf, const glm::mat4 proj, const glm::vec3 origin, uint32_t numSamples, VkFormat colorFormat)
 {
 	draw_grid_with_cam_pos_app(
 		app,
@@ -225,32 +353,70 @@ void draw_grid_app(App* app, lvk::ICommandBuffer& buf, const glm::mat4 proj, con
 	);
 }
 
-void draw_grid_with_cam_pos_app(App* app, lvk::ICommandBuffer& buf, const glm::mat4& mvp, const glm::vec3& origin, const glm::vec3& camPos, uint32_t numSamples, lvk::Format colorFormat)
+void draw_grid_with_cam_pos_app(App* app, VkCommandBuffer buf, const glm::mat4& mvp, const glm::vec3& origin, const glm::vec3& camPos, uint32_t numSamples, VkFormat colorFormat)
 {
-	LVK_PROFILER_FUNCTION();
-
-	if (app->gridPipeline.empty() || app->pipelineSamples != numSamples) {
-		app->gridVert = load_shader_module(app->ctx, "D:/codes/more codes/c++/PBR/src/Grid.vert");
-		app->gridFrag = load_shader_module(app->ctx, "D:/codes/more codes/c++/PBR/src/Grid.frag");
-
+	// 1. Create Pipeline if it doesn't exist. 
+	// If samples change, we ignore it for now to prevent the crash.
+	if (app->gridPipeline == VK_NULL_HANDLE) {
 		app->pipelineSamples = numSamples;
 
-		app->gridPipeline = app->ctx->createRenderPipeline({
-			.smVert = app->gridVert,
-			.smFrag = app->gridFrag,
-			.color = { {
-				.format = colorFormat != lvk::Format_Invalid ? colorFormat : app->ctx->getSwapchainFormat(),
-				.blendEnabled = true,
-				.srcRGBBlendFactor = lvk::BlendFactor_SrcAlpha,
-				.dstRGBBlendFactor = lvk::BlendFactor_OneMinusSrcAlpha,
-			} },
-			.depthFormat = get_depth_format_app(app),
-			.samplesCount = numSamples,
-			.debugName = "Pipeline: drawGrid()",
-			});
+		// Create Layout if missing
+		if (app->gridDescriptorSetLayout == VK_NULL_HANDLE) {
+			VkDescriptorSetLayoutCreateInfo dslInfo = {
+			   .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			   .bindingCount = 0,
+			   .pBindings = nullptr
+			};
+			VK_CHECK(vkCreateDescriptorSetLayout(app->vkDev.device, &dslInfo, nullptr, &app->gridDescriptorSetLayout));
+		}
+
+		// Create Pipeline Layout
+		if (app->gridPipelineLayout == VK_NULL_HANDLE) {
+			const struct PushConstants {
+				glm::mat4 mvp;
+				glm::vec4 camPos;
+				glm::vec4 origin;
+			};
+			VkPushConstantRange pcRange = {
+				.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+				.offset = 0,
+				.size = sizeof(PushConstants)
+			};
+			VkPipelineLayoutCreateInfo plInfo = {
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+				.setLayoutCount = 1,
+				.pSetLayouts = &app->gridDescriptorSetLayout,
+				.pushConstantRangeCount = 1,
+				.pPushConstantRanges = &pcRange
+			};
+			VK_CHECK(vkCreatePipelineLayout(app->vkDev.device, &plInfo, nullptr, &app->gridPipelineLayout));
+		}
+
+		const std::vector<const char*> shaderFiles = {
+			"D:/codes/more codes/c++/PBR/src/Grid.vert",
+			"D:/codes/more codes/c++/PBR/src/Grid.frag"
+		};
+
+		VkFormat depthFormat = find_depth_format(app->vkDev.physicalDevice);
+
+		if (!create_graphics_pipeline(
+			app->vkDev,
+			app->gridPipelineLayout,
+			shaderFiles,
+			&app->gridPipeline,
+			VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+			colorFormat,
+			depthFormat,
+			true, false, true, true, // DepthTest=True, DepthWrite=False
+			static_cast<VkSampleCountFlagBits>(app->pipelineSamples),
+			-1, -1, 0
+		)) {
+			throw std::runtime_error("Failed to create grid pipeline");
+		}
 	}
 
-	const struct {
+	// 2. Record Commands
+	const struct PushConstants {
 		glm::mat4 mvp;
 		glm::vec4 camPos;
 		glm::vec4 origin;
@@ -260,14 +426,19 @@ void draw_grid_with_cam_pos_app(App* app, lvk::ICommandBuffer& buf, const glm::m
 		.origin = glm::vec4(origin, 1.0f),
 	};
 
-	buf.cmdPushDebugGroupLabel("Grid", 0xff0000ff);
-	buf.cmdBindRenderPipeline(app->gridPipeline);
-	buf.cmdBindDepthState({ .compareOp = lvk::CompareOp_Less, .isDepthWriteEnabled = false });
-	buf.cmdPushConstants(pc);
-	buf.cmdDraw(6);
-	buf.cmdPopDebugGroupLabel();
-}
+	vkCmdBindPipeline(buf, VK_PIPELINE_BIND_POINT_GRAPHICS, app->gridPipeline);
 
+	vkCmdPushConstants(
+		buf,
+		app->gridPipelineLayout,
+		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		0,
+		sizeof(PushConstants),
+		&pc
+	);
+
+	vkCmdDraw(buf, 6, 1, 0, 0);
+}
 void draw_fps(App* app)
 {
 	if (const ImGuiViewport* v = ImGui::GetMainViewport()) {
@@ -275,21 +446,24 @@ void draw_fps(App* app)
 	}
 	ImGui::SetNextWindowBgAlpha(0.30f);
 	ImGui::SetNextWindowSize(ImVec2(ImGui::CalcTextSize("FPS : _______").x, 0));
-	if (ImGui::Begin("##FPS", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove)) {
+	if (ImGui::Begin(
+		"##FPS", nullptr,
+		ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+		ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove)) {
 		ImGui::Text("FPS : %i", (int)get_fps(&app->fpsCounter));
 		ImGui::Text("Ms  : %.1f", get_fps(&app->fpsCounter) > 0 ? 1000.0 / get_fps(&app->fpsCounter) : 0);
 	}
 	ImGui::End();
 }
 
-lvk::Format get_depth_format_app(const App* app)
+VkFormat get_depth_format_app(const App* app)
 {
-	return app->ctx->getFormat(app->depthTexture);
+	return find_depth_format(app->vkDev.physicalDevice);
 }
 
-lvk::TextureHandle get_depth_texture(const App* app)
+VulkanImage get_depth_texture(const App* app)
 {
-	return app->depthTexture;
+	return app->depthTexture.image;
 }
 
 void add_mouse_button_callback_app(App* app, GLFWmousebuttonfun cb)
@@ -317,6 +491,61 @@ void draw_memo_app(App* app)
 	
 }
 
+void create_swapchain_framebuffers(App* app)
+{
+	VulkanRenderDevice& vkDev = app->vkDev;
+
+	for (VkFramebuffer fb : app->swapchainFramebuffers) {
+		vkDestroyFramebuffer(vkDev.device, fb, nullptr);
+	}
+
+	app->swapchainFramebuffers.resize(vkDev.swapchainImageViews.size());
+	for (size_t i = 0; i < vkDev.swapchainImageViews.size(); i++) {
+
+		
+		
+		if (!create_color_and_depth_framebuffers(
+			vkDev,
+			vkDev.framebufferWidth,  
+			vkDev.framebufferHeight, 
+			app->gridRenderPass,     
+			vkDev.swapchainImageViews[i], 
+			app->depthTexture.image.imageView,  
+			&app->swapchainFramebuffers[i]))
+		{
+			throw std::runtime_error("Failed to create swapchain framebuffer!");
+		}
+	}
+}
+
+void create_sync_objects(App* app)
+{
+	VulkanRenderDevice& vkDev = app->vkDev;
+
+
+	//1.4 catches semaphore reuse, so changing this so each swapchain image has its own semaphore
+	//const int MAX_FRAMES_IN_FLIGHT = 2;
+
+	uint32_t imageCount = app->vkDev.swapchainImages.size();
+
+	app->imageAvailableSemaphores.resize(imageCount);
+	app->renderFinishedSemaphores.resize(imageCount);
+	app->inFlightFences.resize(imageCount);
+	app->currentFrame = 0;
+
+	VkSemaphoreCreateInfo semaphoreInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+	VkFenceCreateInfo fenceInfo = {
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		.flags = VK_FENCE_CREATE_SIGNALED_BIT 
+	};
+
+	for (int i = 0; i < imageCount; i++) {
+		VK_CHECK(vkCreateSemaphore(vkDev.device, &semaphoreInfo, nullptr, &app->imageAvailableSemaphores[i]));
+		VK_CHECK(vkCreateSemaphore(vkDev.device, &semaphoreInfo, nullptr, &app->renderFinishedSemaphores[i]));
+		VK_CHECK(vkCreateFence(vkDev.device, &fenceInfo, nullptr, &app->inFlightFences[i]));
+	}
+}
+
 void draw_GTF_inspector_app(App* app, GLTFIntrospective& intro)
 {
 	if (!app->cfg.showGLTFInspector)
@@ -324,7 +553,7 @@ void draw_GTF_inspector_app(App* app, GLTFIntrospective& intro)
 		return;
 	}
 
-	ImGui::SetNextWindowPos(ImVec2(10, 300));
+	//ImGui::SetNextWindowPos(ImVec2(10, 300));
 
 	draw_GTF_inspector_animations_app(app, intro);
 	draw_GTF_inspector_materials(app, intro);
@@ -368,116 +597,263 @@ void draw_GTF_inspector_animations_app(App* app, GLTFIntrospective& intro)
 	ImGui::End();
 }
 
+//void draw_GTF_inspector_materials(App* app, GLTFIntrospective& intro)
+//{
+//	(void)app;
+//
+//	if (!intro.showMaterials || intro.materials.empty()) { return; }
+//
+//	if (ImGui::Begin("Materials", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings
+//		| ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoCollapse))
+//	{
+//		for (uint32_t m = 0; m < intro.materials.size(); ++m) {
+//			GLTFMaterialIntro& mat = intro.materials[m];
+//			const uint32_t& currentMask = intro.materials[m].currentMaterialMask;
+//
+//			auto setMaterialMask = [&m = intro.materials[m]](uint32_t flag, bool active) {
+//				m.modified = true;
+//				if (active) {
+//					m.currentMaterialMask |= flag;
+//				}
+//				else {
+//					m.currentMaterialMask &= ~flag;
+//				}
+//				};
+//
+//			const bool isUnlit = (currentMask & MaterialType_Unlit) == MaterialType_Unlit;
+//			bool state = false;
+//
+//			ImGui::Text("%s", mat.name.c_str());
+//			ImGui::PushID(m);
+//			state = isUnlit;
+//
+//			if (ImGui::RadioButton("Unlit", state)) {
+//				mat.currentMaterialMask = 0;
+//				setMaterialMask(MaterialType_Unlit, true);
+//			}
+//
+//			state = (currentMask & MaterialType_MetallicRoughness) == MaterialType_MetallicRoughness;
+//			if ((mat.materialMask & MaterialType_MetallicRoughness) == MaterialType_MetallicRoughness) {
+//				if (ImGui::RadioButton("MetallicRoughness", state)) {
+//					setMaterialMask(MaterialType_Unlit, false);
+//					setMaterialMask(MaterialType_SpecularGlossiness, false);
+//					setMaterialMask(MaterialType_MetallicRoughness, true);
+//				}
+//			}
+//
+//			state = (currentMask & MaterialType_SpecularGlossiness) == MaterialType_SpecularGlossiness;
+//			if ((mat.materialMask & MaterialType_SpecularGlossiness) == MaterialType_SpecularGlossiness) {
+//				if (ImGui::RadioButton("SpecularGlossiness", state)) {
+//					setMaterialMask(MaterialType_Unlit, false);
+//					setMaterialMask(MaterialType_SpecularGlossiness, true);
+//					setMaterialMask(MaterialType_MetallicRoughness, false);
+//				}
+//			}
+//
+//			state = (currentMask & MaterialType_Sheen) == MaterialType_Sheen;
+//			if ((mat.materialMask & MaterialType_Sheen) == MaterialType_Sheen) {
+//				ImGui::BeginDisabled(isUnlit);
+//				if (ImGui::Checkbox("Sheen", &state)) {
+//					setMaterialMask(MaterialType_Sheen, state);
+//				}
+//				ImGui::EndDisabled();
+//			}
+//
+//			state = (mat.currentMaterialMask & MaterialType_ClearCoat) == MaterialType_ClearCoat;
+//			if ((mat.materialMask & MaterialType_ClearCoat) == MaterialType_ClearCoat) {
+//				ImGui::BeginDisabled(isUnlit);
+//				if (ImGui::Checkbox("ClearCoat", &state)) {
+//					setMaterialMask(MaterialType_ClearCoat, state);
+//				}
+//				ImGui::EndDisabled();
+//			}
+//
+//			state = (mat.currentMaterialMask & MaterialType_Specular) == MaterialType_Specular;
+//			if ((mat.materialMask & MaterialType_Specular) == MaterialType_Specular) {
+//				ImGui::BeginDisabled(isUnlit);
+//				if (ImGui::Checkbox("Specular", &state)) {
+//					setMaterialMask(MaterialType_Specular, state);
+//				}
+//				ImGui::EndDisabled();
+//			}
+//
+//			state = (mat.currentMaterialMask & MaterialType_Transmission) == MaterialType_Transmission;
+//			if ((mat.materialMask & MaterialType_Transmission) == MaterialType_Transmission) {
+//				ImGui::BeginDisabled(isUnlit);
+//				if (ImGui::Checkbox("Transmission", &state)) {
+//					if (!state) {
+//						setMaterialMask(MaterialType_Volume, false);
+//					}
+//					setMaterialMask(MaterialType_Transmission, state);
+//				}
+//				ImGui::EndDisabled();
+//			}
+//
+//			state = (mat.currentMaterialMask & MaterialType_Volume) == MaterialType_Volume;
+//			if ((mat.materialMask & MaterialType_Volume) == MaterialType_Volume) {
+//				ImGui::BeginDisabled(isUnlit);
+//				if (ImGui::Checkbox("Volume", &state)) {
+//					setMaterialMask(MaterialType_Volume, state);
+//					if (state) {
+//						setMaterialMask(MaterialType_Transmission, true);
+//					}
+//				}
+//				ImGui::EndDisabled();
+//			}
+//
+//			ImGui::PopID();
+//		}
+//	}
+//
+//
+//	ImGui::End();
+//}
+
 void draw_GTF_inspector_materials(App* app, GLTFIntrospective& intro)
-{/*
+{
 	(void)app;
-	LVK_PROFILER_FUNCTION();
+	if (!intro.showMaterials || intro.materials.empty()) return;
 
-	if (!intro.showMaterials || intro.materials.empty()) { return; }
+	
+	ImGui::SetNextWindowSize(ImVec2(350, 500), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
 
-	if (ImGui::Begin("Materials", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings
-		| ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoCollapse))
+	if (ImGui::Begin("Materials", nullptr, ImGuiWindowFlags_None))
 	{
-		for (uint32_t m = 0; m < intro.materials.size(); ++m) {
-			GLTFMaterialIntro& mat = intro.materials[m];
-			const uint32_t& currentMask = intro.materials[m].currentMaterialMask;
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::Spacing();
 
-			auto setMaterialMask = [&m = intro.materials[m]](uint32_t flag, bool active) {
-				m.modified = true;
+		
+		ImGui::BeginChild("MaterialsList", ImVec2(0, 0), true);
+
+		for (uint32_t m = 0; m < intro.materials.size(); ++m)
+		{
+			GLTFMaterialIntro& mat = intro.materials[m];
+			const uint32_t& currentMask = mat.currentMaterialMask;
+			const bool isUnlit = (currentMask & MaterialType_Unlit) == MaterialType_Unlit;
+
+			auto setMaterialMask = [&mat](uint32_t flag, bool active) {
+				mat.modified = true;
 				if (active) {
-					m.currentMaterialMask |= flag;
+					mat.currentMaterialMask |= flag;
 				}
 				else {
-					m.currentMaterialMask &= ~flag;
+					mat.currentMaterialMask &= ~flag;
 				}
 				};
 
-			const bool isUnlit = (currentMask & MaterialType_Unlit) == MaterialType_Unlit;
-			bool state = false;
-
-			ImGui::Text("%s", mat.name.c_str());
 			ImGui::PushID(m);
-			state = isUnlit;
 
-			if (ImGui::RadioButton("Unlit", state)) {
-				mat.currentMaterialMask = 0;
-				setMaterialMask(MaterialType_Unlit, true);
-			}
+			bool materialOpen = ImGui::CollapsingHeader(mat.name.empty() ?
+				("Material " + std::to_string(m)).c_str() : mat.name.c_str());
 
-			state = (currentMask & MaterialType_MetallicRoughness) == MaterialType_MetallicRoughness;
-			if ((mat.materialMask & MaterialType_MetallicRoughness) == MaterialType_MetallicRoughness) {
-				if (ImGui::RadioButton("MetallicRoughness", state)) {
-					setMaterialMask(MaterialType_Unlit, false);
-					setMaterialMask(MaterialType_SpecularGlossiness, false);
-					setMaterialMask(MaterialType_MetallicRoughness, true);
+			if (materialOpen)
+			{
+				ImGui::Indent();
+
+				if (ImGui::RadioButton("Unlit", isUnlit)) {
+					mat.currentMaterialMask = MaterialType_Unlit;
+					mat.modified = true;
 				}
-			}
 
-			state = (currentMask & MaterialType_SpecularGlossiness) == MaterialType_SpecularGlossiness;
-			if ((mat.materialMask & MaterialType_SpecularGlossiness) == MaterialType_SpecularGlossiness) {
-				if (ImGui::RadioButton("SpecularGlossiness", state)) {
-					setMaterialMask(MaterialType_Unlit, false);
-					setMaterialMask(MaterialType_SpecularGlossiness, true);
-					setMaterialMask(MaterialType_MetallicRoughness, false);
-				}
-			}
+				ImGui::SameLine();
 
-			state = (currentMask & MaterialType_Sheen) == MaterialType_Sheen;
-			if ((mat.materialMask & MaterialType_Sheen) == MaterialType_Sheen) {
-				ImGui::BeginDisabled(isUnlit);
-				if (ImGui::Checkbox("Sheen", &state)) {
-					setMaterialMask(MaterialType_Sheen, state);
-				}
-				ImGui::EndDisabled();
-			}
-
-			state = (mat.currentMaterialMask & MaterialType_ClearCoat) == MaterialType_ClearCoat;
-			if ((mat.materialMask & MaterialType_ClearCoat) == MaterialType_ClearCoat) {
-				ImGui::BeginDisabled(isUnlit);
-				if (ImGui::Checkbox("ClearCoat", &state)) {
-					setMaterialMask(MaterialType_ClearCoat, state);
-				}
-				ImGui::EndDisabled();
-			}
-
-			state = (mat.currentMaterialMask & MaterialType_Specular) == MaterialType_Specular;
-			if ((mat.materialMask & MaterialType_Specular) == MaterialType_Specular) {
-				ImGui::BeginDisabled(isUnlit);
-				if (ImGui::Checkbox("Specular", &state)) {
-					setMaterialMask(MaterialType_Specular, state);
-				}
-				ImGui::EndDisabled();
-			}
-
-			state = (mat.currentMaterialMask & MaterialType_Transmission) == MaterialType_Transmission;
-			if ((mat.materialMask & MaterialType_Transmission) == MaterialType_Transmission) {
-				ImGui::BeginDisabled(isUnlit);
-				if (ImGui::Checkbox("Transmission", &state)) {
-					if (!state) {
-						setMaterialMask(MaterialType_Volume, false);
+				if ((mat.materialMask & MaterialType_MetallicRoughness) == MaterialType_MetallicRoughness) {
+					bool state = (currentMask & MaterialType_MetallicRoughness) == MaterialType_MetallicRoughness;
+					if (ImGui::RadioButton("MetallicRoughness", state)) {
+						mat.currentMaterialMask = MaterialType_MetallicRoughness;
+						mat.modified = true;
 					}
-					setMaterialMask(MaterialType_Transmission, state);
+					ImGui::SameLine();
 				}
-				ImGui::EndDisabled();
-			}
 
-			state = (mat.currentMaterialMask & MaterialType_Volume) == MaterialType_Volume;
-			if ((mat.materialMask & MaterialType_Volume) == MaterialType_Volume) {
-				ImGui::BeginDisabled(isUnlit);
-				if (ImGui::Checkbox("Volume", &state)) {
-					setMaterialMask(MaterialType_Volume, state);
-					if (state) {
-						setMaterialMask(MaterialType_Transmission, true);
+				if ((mat.materialMask & MaterialType_SpecularGlossiness) == MaterialType_SpecularGlossiness) {
+					bool state = (currentMask & MaterialType_SpecularGlossiness) == MaterialType_SpecularGlossiness;
+					if (ImGui::RadioButton("SpecularGlossiness", state)) {
+						mat.currentMaterialMask = MaterialType_SpecularGlossiness;
+						mat.modified = true;
 					}
 				}
-				ImGui::EndDisabled();
+
+				if (ImGui::BeginTable("MaterialFeatures", 2, ImGuiTableFlags_SizingFixedFit))
+				{
+					ImGui::TableNextColumn();
+
+					if ((mat.materialMask & MaterialType_Sheen) == MaterialType_Sheen) {
+						bool state = (currentMask & MaterialType_Sheen) == MaterialType_Sheen;
+						ImGui::BeginDisabled(isUnlit);
+						if (ImGui::Checkbox("Sheen", &state)) {
+							setMaterialMask(MaterialType_Sheen, state);
+						}
+						ImGui::EndDisabled();
+					}
+
+					if ((mat.materialMask & MaterialType_ClearCoat) == MaterialType_ClearCoat) {
+						bool state = (currentMask & MaterialType_ClearCoat) == MaterialType_ClearCoat;
+						ImGui::BeginDisabled(isUnlit);
+						if (ImGui::Checkbox("Clear Coat", &state)) {
+							setMaterialMask(MaterialType_ClearCoat, state);
+						}
+						ImGui::EndDisabled();
+					}
+
+					ImGui::TableNextColumn();
+
+					if ((mat.materialMask & MaterialType_Specular) == MaterialType_Specular) {
+						bool state = (currentMask & MaterialType_Specular) == MaterialType_Specular;
+						ImGui::BeginDisabled(isUnlit);
+						if (ImGui::Checkbox("Specular", &state)) {
+							setMaterialMask(MaterialType_Specular, state);
+						}
+						ImGui::EndDisabled();
+					}
+
+					if ((mat.materialMask & MaterialType_Transmission) == MaterialType_Transmission) {
+						bool state = (currentMask & MaterialType_Transmission) == MaterialType_Transmission;
+						ImGui::BeginDisabled(isUnlit);
+						if (ImGui::Checkbox("Transmission", &state)) {
+							if (!state) {
+								setMaterialMask(MaterialType_Volume, false);
+							}
+							setMaterialMask(MaterialType_Transmission, state);
+						}
+						ImGui::EndDisabled();
+					}
+
+					if ((mat.materialMask & MaterialType_Volume) == MaterialType_Volume) {
+						bool state = (currentMask & MaterialType_Volume) == MaterialType_Volume;
+						ImGui::BeginDisabled(isUnlit);
+						ImGui::Indent();
+						if (ImGui::Checkbox("Volume", &state)) {
+							setMaterialMask(MaterialType_Volume, state);
+							if (state) {
+								setMaterialMask(MaterialType_Transmission, true);
+							}
+						}
+						ImGui::Unindent();
+						ImGui::EndDisabled();
+					}
+
+					ImGui::EndTable();
+				}
+
+				ImGui::Spacing();
+				ImGui::TextDisabled("Mask: 0x%08X", currentMask);
+
+				ImGui::Unindent();
 			}
 
 			ImGui::PopID();
-		}
-	}
 
-	ImGui::End();*/
+			if (m < intro.materials.size() - 1) {
+				ImGui::Separator();
+			}
+		}
+
+		ImGui::EndChild();  
+	}
+	ImGui::End();
 }
 
 void draw_GTF_inspector_cameras(App* app, GLTFIntrospective& intro)

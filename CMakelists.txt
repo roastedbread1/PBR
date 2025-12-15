@@ -1,64 +1,141 @@
-cmake_minimum_required(VERSION 3.12)
+#disables vcpkg because FUCK vcpkg FUCK THESE GUYS
+if(DEFINED ENV{VCPKG_ROOT})
+    unset(ENV{VCPKG_ROOT})
+endif()
+if(DEFINED VCPKG_ROOT)
+    unset(VCPKG_ROOT CACHE)
+endif()
+if(DEFINED CMAKE_TOOLCHAIN_FILE)
+    unset(CMAKE_TOOLCHAIN_FILE CACHE)
+endif()
 
+cmake_minimum_required(VERSION 3.12)
 project(3Drenderer)
 
-if(MSVC)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+set(GLFW_BUILD_SHARED_LIBS OFF CACHE BOOL "Build GLFW shared library" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "Build GLFW examples" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "Build GLFW tests" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "Build GLFW docs" FORCE)
 
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+
+set(KTX_ROOT "D:/codes/libs/KTX-Software")
+
+find_package(Vulkan REQUIRED)
+
+set(KTX_FEATURE_TESTS OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_TOOLS OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_DOC OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_LOADTEST_APPS OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_VK_UPLOAD OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_GL_UPLOAD OFF CACHE BOOL "" FORCE)
+set(BASISU_SUPPORT_SSE OFF CACHE BOOL "" FORCE)
+set(KTX_USE_GIT_VERSION OFF CACHE BOOL "" FORCE)
+
+
+set(KTX OFF CACHE BOOL "Build KTX" FORCE)  # This disables building the KTX command line tool
+set(KTX_API_FILE "ktx.h" CACHE STRING "" FORCE)
+
+set(RAPIDJSON_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/rapidjson/include CACHE PATH "")
+set(BUILD_UNIT_TESTS OFF CACHE BOOL "Disable Bullet tests")
+set(BUILD_CPU_DEMOS OFF CACHE BOOL "Disable Bullet demos")
+set(BUILD_EXTRAS OFF CACHE BOOL "Disable Bullet extras")
+
+if(NOT TARGET ktx)
+    message(STATUS "external KTX from: ${KTX_ROOT}")
+    
+    add_subdirectory(${KTX_ROOT} ${CMAKE_BINARY_DIR}/KTX-build)
+endif()
+
+add_subdirectory(external/SPIRV-Headers)
+add_subdirectory(external/SPIRV-Tools)
+add_subdirectory(external/glfw)
+add_subdirectory(external/assimp)
+#add_subdirectory(external/bullet3)
+add_subdirectory(external/meshoptimizer)
+add_subdirectory(external/glslang)
+
+
+set(VOLK_SOURCES
+    external/volk/volk.c
+)
+add_library(volk STATIC ${VOLK_SOURCES})
+target_include_directories(volk PUBLIC 
+    external/volk
+    ${Vulkan_INCLUDE_DIRS}  
+)
+set(IMGUIZMO_SOURCES
+    external/ImGuizmo/ImGuizmo.cpp
+)
+
+
+
+
+set(IMGUI_SOURCES
+    external/imgui/imgui.cpp
+    external/imgui/imgui_demo.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+    external/implot/implot.cpp
+    external/implot/implot_items.cpp
+    external/imgui/backends/imgui_impl_vulkan.cpp
+    external/imgui/backends/imgui_impl_glfw.cpp
+     
+)
+
+add_library(imguizmo STATIC ${IMGUIZMO_SOURCES})
+target_include_directories(imguizmo PUBLIC 
+    external/ImGuizmo
+    external/imgui  
+)
+
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CXX_EXTENSIONS OFF)
 
 file(GLOB_RECURSE MY_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-add_executable(${CMAKE_PROJECT_NAME} ${MY_SOURCES})
+add_executable(${CMAKE_PROJECT_NAME} ${MY_SOURCES} ${IMGUI_SOURCES})
 
-target_sources("${CMAKE_PROJECT_NAME}" PRIVATE "${MY_SOURCES}")
-
-target_include_directories("${CMAKE_PROJECT_NAME}" PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/")
-set(LVK_WITH_SAMPLES OFF CACHE BOOL "Disable LVK Samples")
-set(LVK_WITH_GLFW ON CACHE BOOL "Enable LVK's internal GLFW")
-set(LVK_WITH_VULKAN_PORTABILITY ON CACHE BOOL "Enable Vulkan portability subset")
-set(CMAKE_TOOLCHAIN_FILE "D:/dev/vcpkg/vcpkg/scripts/buildsystems/vcpkg.cmake")
-
-#find_package(glfw3 CONFIG REQUIRED)
-find_package(assimp CONFIG REQUIRED)
-find_package(glm CONFIG REQUIRED)
-find_package(glslang CONFIG REQUIRED)
-find_package(volk CONFIG REQUIRED)
-find_package(meshoptimizer CONFIG REQUIRED)
-find_package(gli CONFIG REQUIRED)
-find_package(rapidjson CONFIG REQUIRED)
-find_package(taskflow CONFIG REQUIRED)
-find_package(bullet CONFIG REQUIRED)
-find_package(ImGuizmo CONFIG REQUIRED)
-find_package(glad CONFIG REQUIRED)
-find_package(imgui CONFIG REQUIRED)
-find_package(Ktx CONFIG REQUIRED)
-
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "D:/dev/vcpkg/vcpkg/installed/x64-windows/include")
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lightweightvk)
 target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC 
-    "${CMAKE_CURRENT_SOURCE_DIR}/external/lightweightvk/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/"   
+    external/imgui
+    external/imgui/backends
+    external/glm
+    external/gli
+    external/rapidjson/include
+    external/ImGuizmo
+    external/implot
+    external/volk
+    external/taskflow/taskflow
+    ${KTX_ROOT}/include
+  #  external/bullet3/src
+    external/assimp/include
+    ${Vulkan_INCLUDE_DIRS} 
 )
-#target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-file(GLOB_RECURSE MY_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h")
 
-target_sources("${CMAKE_PROJECT_NAME}" PRIVATE ${MY_SOURCES})
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    IMGUI_IMPL_VULKAN_NO_PROTOTYPES
+    VK_NO_PROTOTYPES  
+    GLM_ENABLE_EXPERIMENTAL
+    _CRT_SECURE_NO_WARNINGS
+    _SCL_SECURE_NO_WARNINGS
+)
+
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE 
-LVKLibrary
-rapidjson
-assimp::assimp
-${BULLET_LIBRARIES}
-glfw
-glm::glm
-gli
-glslang::glslang glslang::glslang-default-resource-limits glslang::SPIRV glslang::SPVRemapper
-imguizmo::imguizmo
-meshoptimizer::meshoptimizer
-Taskflow::Taskflow
-volk::volk volk::volk_headers
-glad::glad
-imgui::imgui
-KTX::ktx
+    glfw
+    assimp
+ #   BulletDynamics BulletCollision LinearMath
+    meshoptimizer
+    ktx
+    glslang 
+    OSDependent
+    glslang-default-resource-limits
+    SPIRV
+    volk
+    imguizmo
 )

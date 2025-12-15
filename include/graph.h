@@ -1,9 +1,8 @@
 #pragma once
-#include <lvk/LVK.h>
 #include <glm/ext.hpp>
 #include <deque>
 #include <vector>
-#include <implot/implot.h>
+#include <implot.h>
 
 struct LinearGraph
 {
@@ -31,7 +30,7 @@ inline void add_point_graph(LinearGraph* graph, float value)
 
 inline void render_graph(LinearGraph* graph, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const glm::vec4& color)
 {
-    LVK_PROFILER_FUNCTION();
+   
 
     float minVal = std::numeric_limits<float>::max();
     float maxVal = std::numeric_limits<float>::min();

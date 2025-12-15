@@ -1,35 +1,5 @@
 #include <line_canvas.h>
 
-static const char* codeVS = R"(
-layout (location = 0) out vec4 out_color;
-
-struct Vertex {
-  vec4 pos;
-  vec4 rgba;
-};
-
-layout(std430, buffer_reference) readonly buffer VertexBuffer {
-  Vertex vertices[];
-};
-
-layout(push_constant) uniform PushConstants {
-  mat4 mvp;
-  VertexBuffer vb;
-};
-
-void main() {
-  out_color = vb.vertices[gl_VertexIndex].rgba;
-  gl_Position = mvp * vb.vertices[gl_VertexIndex].pos;
-})";
-
-static const char* codeFS = R"(
-layout (location = 0) in vec4 in_color;
-layout (location = 0) out vec4 out_color;
-
-void main() {
-  out_color = in_color;
-})";
-
 void init_line_canvas2D(LineCanvas2D* canvas)
 {
 	canvas->lines.clear();
@@ -48,8 +18,6 @@ void push_line_canvas2D(LineCanvas2D* canvas, const glm::vec2& p1, const glm::ve
 void render_line_canvas2D(const LineCanvas2D* canvas, const char* nameImGuiWindow)
 {
 
-	LVK_PROFILER_FUNCTION();
-
 	ImGui::SetNextWindowPos(ImVec2(0, 0));
 	ImGui::SetNextWindowSize(ImGui::GetMainViewport()->Size);
 	ImGui::Begin(
@@ -63,37 +31,51 @@ void render_line_canvas2D(const LineCanvas2D* canvas, const char* nameImGuiWindo
 	{
 		drawList->AddLine(ImVec2(l.p1.x, l.p1.y), ImVec2(l.p2.x, l.p2.y), ImColor(l.color.r, l.color.g, l.color.b, l.color.a));
 	}
-	ImGui::End;
+	ImGui::End();
 }
 
 void init_line_canvas3D(LineCanvas3D* canvas)
 {
 	canvas->mvp = glm::mat4(1.0f);
 	canvas->lines.clear();
-	canvas->pipeline = nullptr;
-	canvas->vert = nullptr;
-	canvas->frag = nullptr;
+	canvas->pipeline = VK_NULL_HANDLE;
+	canvas->pipelineLayout = VK_NULL_HANDLE;
+	canvas->vert.shaderModule = VK_NULL_HANDLE;
+	canvas->frag.shaderModule = VK_NULL_HANDLE;
 	canvas->pipelineSamples = 1;
 	canvas->currentFrame = 0;
 	
 	for (int i = 0; i < 3; i++)
 	{
-		canvas->linesBuffer[i] = nullptr;
-		canvas->currentBufferSize[i] = 0;
+		canvas->linesBuffer[i] = {}; 
 	}
 
 }
 
-void destroy_line_canvas3D(LineCanvas3D* canvas)
+void destroy_line_canvas3D(LineCanvas3D* canvas, VkDevice device)
 {
 	for (int i = 0; i < 3; i++)
 	{
-		canvas->linesBuffer[i] = nullptr;
+		if (canvas->linesBuffer[i].buffer != VK_NULL_HANDLE) {
+			vkDestroyBuffer(device, canvas->linesBuffer[i].buffer, nullptr);
+		}
+		if (canvas->linesBuffer[i].memory != VK_NULL_HANDLE) {
+			vkFreeMemory(device, canvas->linesBuffer[i].memory, nullptr);
+		}
 	}
 
-	canvas->pipeline = nullptr;
-	canvas->vert = nullptr;
-	canvas->frag = nullptr;
+	if (canvas->pipeline != VK_NULL_HANDLE) {
+		vkDestroyPipeline(device, canvas->pipeline, nullptr);
+	}
+	if (canvas->pipelineLayout != VK_NULL_HANDLE) {
+		vkDestroyPipelineLayout(device, canvas->pipelineLayout, nullptr);
+	}
+	if (canvas->vert.shaderModule != VK_NULL_HANDLE) {
+		vkDestroyShaderModule(device, canvas->vert.shaderModule, nullptr);
+	}
+	if (canvas->frag.shaderModule != VK_NULL_HANDLE) {
+		vkDestroyShaderModule(device, canvas->frag.shaderModule, nullptr);
+	}
 }
 
 void clear_line_canvas3D(LineCanvas3D* canvas)
@@ -106,60 +88,135 @@ void set_matrix_line_canvas3D(LineCanvas3D* canvas, const glm::mat4& mvp)
 	canvas->mvp = mvp;
 }
 
-void render_line_canvas3D(LineCanvas3D* canvas, lvk::IContext& ctx, const lvk::Framebuffer& desc, lvk::ICommandBuffer& buf, uint32_t numSamples)
+void render_line_canvas3D(LineCanvas3D* canvas, App* app, VkCommandBuffer buf, VkRenderPass renderPass, VkFormat colorFormat, VkFormat depthFormat, uint32_t numSamples)
 {
-	LVK_PROFILER_FUNCTION();
+	
 
 	if (canvas->lines.empty()) {
 		return;
 	}
 
-	const uint32_t requiredSize = canvas->lines.size() * sizeof(LineData3D);
+	VulkanRenderDevice& vkDev = app->vkDev;
+	const VkDeviceSize requiredSize = canvas->lines.size() * sizeof(LineData3D);
 
-	if (canvas->currentBufferSize[canvas->currentFrame] < requiredSize) {
-		canvas->linesBuffer[canvas->currentFrame] = ctx.createBuffer(
-			{ .usage = lvk::BufferUsageBits_Storage, .storage = lvk::StorageType_HostVisible, .size = requiredSize, .data = canvas->lines.data() });
-		canvas->currentBufferSize[canvas->currentFrame] = requiredSize;
-	}
-	else {
-		ctx.upload(canvas->linesBuffer[canvas->currentFrame], canvas->lines.data(), requiredSize);
+	VulkanBuffer& currentBuffer = canvas->linesBuffer[canvas->currentFrame];
+
+	
+	if (currentBuffer.size < requiredSize)
+	{
+	
+		if (currentBuffer.buffer != VK_NULL_HANDLE) {
+			vkDestroyBuffer(vkDev.device, currentBuffer.buffer, nullptr);
+		}
+		if (currentBuffer.memory != VK_NULL_HANDLE) {
+			vkFreeMemory(vkDev.device, currentBuffer.memory, nullptr);
+		}
+
+	
+	VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+		VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+		VK_CHECK(create_buffer(vkDev.device, vkDev.physicalDevice, requiredSize, usage, props, currentBuffer.buffer, currentBuffer.memory));
+		currentBuffer.size = requiredSize;
+		currentBuffer.ptr = nullptr; 
 	}
 
-	if (canvas->pipeline.empty() || canvas->pipelineSamples != numSamples) {
+	
+	upload_buffer_data(vkDev, currentBuffer.memory, 0, canvas->lines.data(), (size_t)requiredSize);
+
+
+	
+	if (canvas->pipeline == VK_NULL_HANDLE || canvas->pipelineSamples != numSamples)
+	{
+	
+		if (canvas->pipeline != VK_NULL_HANDLE) {
+			vkDestroyPipeline(vkDev.device, canvas->pipeline, nullptr);
+			vkDestroyPipelineLayout(vkDev.device, canvas->pipelineLayout, nullptr);
+			vkDestroyShaderModule(vkDev.device, canvas->vert.shaderModule, nullptr);
+			vkDestroyShaderModule(vkDev.device, canvas->frag.shaderModule, nullptr);
+		}
+
 		canvas->pipelineSamples = numSamples;
 
-		canvas->vert = ctx.createShaderModule({ codeVS, lvk::Stage_Vert, "Shader Module: LineCanvas3D (vert)" });
-		canvas->frag = ctx.createShaderModule({ codeFS, lvk::Stage_Frag, "Shader Module: LineCanvas3D (frag)" });
-		canvas->pipeline = ctx.createRenderPipeline(
-			{
-				.topology = lvk::Topology_Line,
-				.smVert = canvas->vert,
-				.smFrag = canvas->frag,
-				.color = { {
-					.format = ctx.getFormat(desc.color[0].texture),
-					.blendEnabled = true,
-					.srcRGBBlendFactor = lvk::BlendFactor_SrcAlpha,
-					.dstRGBBlendFactor = lvk::BlendFactor_OneMinusSrcAlpha,
-				} },
-				.depthFormat = desc.depthStencil.texture ? ctx.getFormat(desc.depthStencil.texture) : lvk::Format_Invalid,
-				.cullMode = lvk::CullMode_None,
-				.samplesCount = numSamples,
-			},
-			nullptr);
-	}
+	
+		VK_CHECK(create_shader_module(vkDev.device, &canvas->vert, "line_canvas.vert"));
+		VK_CHECK(create_shader_module(vkDev.device, &canvas->frag, "line_canvas.frag"));
+		const std::vector<const char*> shaderFiles = { "line_canvas.vert", "line_canvas.frag" };
 
+
+	
+	
+		VkDescriptorSetLayout emptySetLayout;
+		VkDescriptorSetLayoutCreateInfo dslInfo = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 0, .pBindings = nullptr };
+		VK_CHECK(vkCreateDescriptorSetLayout(vkDev.device, &dslInfo, nullptr, &emptySetLayout));
+
+		struct PushConstants {
+			glm::mat4 mvp;
+			uint64_t addr; 
+		};
+
+		VkPushConstantRange pcRange = {
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+			.offset = 0,
+			.size = sizeof(PushConstants)
+		};
+
+		VkPipelineLayoutCreateInfo plInfo = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+			.setLayoutCount = 1,
+			.pSetLayouts = &emptySetLayout,
+			.pushConstantRangeCount = 1,
+			.pPushConstantRanges = &pcRange
+		};
+
+		VK_CHECK(vkCreatePipelineLayout(vkDev.device, &plInfo, nullptr, &canvas->pipelineLayout));
+
+		vkDestroyDescriptorSetLayout(vkDev.device, emptySetLayout, nullptr); // No longer needed
+
+
+		
+		bool hasDepth = (depthFormat != VK_FORMAT_UNDEFINED);
+
+		if (!create_graphics_pipeline(
+			vkDev,
+			canvas->pipelineLayout,
+			shaderFiles,
+			&canvas->pipeline,
+			VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
+			colorFormat,   
+			depthFormat,   
+			hasDepth,      
+			hasDepth,      
+			true,          
+			false,         
+			static_cast<VkSampleCountFlagBits>(numSamples)
+		)) {
+			throw std::runtime_error("Failed to create line canvas pipeline");
+		}
+	}	
+	
+	VkBufferDeviceAddressInfo addrInfo = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+		.buffer = currentBuffer.buffer
+	};
+	VkDeviceAddress bufferAddress = vkGetBufferDeviceAddress(vkDev.device, &addrInfo);
+
+	
 	struct {
 		glm::mat4 mvp;
 		uint64_t addr;
 	} pc{
 		.mvp = canvas->mvp,
-		.addr = ctx.gpuAddress(canvas->linesBuffer[canvas->currentFrame]),
+		.addr = bufferAddress,
 	};
-	buf.cmdBindRenderPipeline(canvas->pipeline);
-	buf.cmdPushConstants(pc);
-	buf.cmdDraw(canvas->lines.size());
 
-	canvas->currentFrame = (canvas->currentFrame + 1) % LVK_ARRAY_NUM_ELEMENTS(canvas->linesBuffer);
+	vkCmdBindPipeline(buf, VK_PIPELINE_BIND_POINT_GRAPHICS, canvas->pipeline);
+	vkCmdPushConstants(buf, canvas->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+
+	
+	vkCmdDraw(buf, (uint32_t)canvas->lines.size(), 1, 0, 0);
+
+	canvas->currentFrame = (canvas->currentFrame + 1) % 3;
 }
 
 void push_line_canvas3D(LineCanvas3D* canvas, const glm::vec3& p1, const glm::vec3& p2, const glm::vec4& c)

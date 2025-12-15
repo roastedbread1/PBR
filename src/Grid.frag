@@ -1,8 +1,8 @@
 ﻿//
 #version 460 core
 
-#include <data/shaders/GridParameters.h>
-#include <data/shaders/GridCalculation.h>
+#include <D:/codes/more codes/c++/PBR/include/grid_parameters.h>
+#include <D:/codes/more codes/c++/PBR/include/grid_calculations.h>
 
 layout (location=0) in vec2 uv;
 layout (location=1) in vec2 camPos;

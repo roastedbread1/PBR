@@ -1,5 +1,5 @@
 #pragma once
-
+#include "utils_vulkan.h"
 #include <algorithm>
 #include <memory>
 #include <string.h>
@@ -8,9 +8,8 @@
 #include <malloc.h>
 
 #include <glslang/Include/glslang_c_interface.h>
-#include <ldrutils/lutils/ScopeExit.h>
-#include <lvk/LVK.h>
-#include <lvk/vulkan/VulkanUtils.h>
+#include <ScopeExit.h>
+
 
 bool ends_with(const char* s, const char* part);
 
@@ -18,9 +17,7 @@ std::string read_shader_file(const char* fileName);
 
 VkShaderStageFlagBits shader_stage_from_file_name(const char* fileName);
 
-lvk::Holder<lvk::ShaderModuleHandle> load_shader_module(const std::unique_ptr<lvk::IContext>& ctx, const char* fileName);
-lvk::Holder<lvk::TextureHandle> load_texture(
-    const std::unique_ptr<lvk::IContext>& ctx, const char* fileName, lvk::TextureType textureType = lvk::TextureType_2D, bool sRGB = false);
+VulkanTexture load_texture(VulkanRenderDevice& vkDev, const char* fileName, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D, bool sRGB = false);
 
 template <typename T> inline void merge_vectors(std::vector<T>& v1, const std::vector<T>& v2)
 {

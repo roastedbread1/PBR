@@ -1,18 +1,18 @@
-#include <lvk/LVK.h>
-#include <lvk/vulkan/VulkanClasses.h>
+#include <volk.h>
 #include <glfw/glfw3.h>
 #include <memory>
 #include<iostream>
-
+#include <utils_cubemap.h>
 #include <string.h>
 #include <string>
 #include <malloc.h>
-
+#include <cassert>
 #include "Utils.h"
 
-#include <stb/stb_image.h>
+#include <stb_image.h>
 #include <ktx.h>
-#include <ktx-software/lib/gl_format.h>
+
+#include <ktxvulkan.h>
     
 
 #include <unordered_map>
@@ -31,7 +31,7 @@ std::string read_shader_file(const char* fileName)
     FILE* file = fopen(fileName, "r");
 
     if (!file) {
-        LLOGW("I/O error. Cannot open shader file '%s'\n", fileName);
+        printf("I/O error. Cannot open shader file '%s'\n", fileName);
         return std::string();
     }
 
@@ -59,7 +59,7 @@ std::string read_shader_file(const char* fileName)
         const auto p1 = code.find('<', pos);
         const auto p2 = code.find('>', pos);
         if (p1 == code.npos || p2 == code.npos || p2 <= p1) {
-            LLOGW("Error while loading shader program: %s\n", code.c_str());
+            printf("Error while loading shader program: %s\n", code.c_str());
             return std::string();
         }
         const std::string name = code.substr(p1 + 1, p2 - p1 - 1);
@@ -94,141 +94,215 @@ VkShaderStageFlagBits shader_stage_from_file_name(const char* fileName)
     return VK_SHADER_STAGE_VERTEX_BIT;
 }
 
-lvk::ShaderStage lvk_shader_stage_from_file_name(const char* fileName)
-{
-    if (ends_with(fileName, ".vert"))
-        return lvk::Stage_Vert;
-
-    if (ends_with(fileName, ".frag"))
-        return lvk::Stage_Frag;
-
-    if (ends_with(fileName, ".geom"))
-        return lvk::Stage_Geom;
-
-    if (ends_with(fileName, ".comp"))
-        return lvk::Stage_Comp;
-
-    if (ends_with(fileName, ".tesc"))
-        return lvk::Stage_Tesc;
-
-    if (ends_with(fileName, ".tese"))
-        return lvk::Stage_Tese;
-
-    return lvk::Stage_Vert;
-}
-
-lvk::Holder<lvk::ShaderModuleHandle> load_shader_module(const std::unique_ptr<lvk::IContext>& ctx, const char* fileName) {
-    const std::string code = read_shader_file(fileName);
-    const lvk::ShaderStage stage = lvk_shader_stage_from_file_name(fileName);
-
-    if (code.empty()) {
-        return {};
-    }
-
-    lvk::Result res;
-
-    lvk::Holder<lvk::ShaderModuleHandle> handle =
-        ctx->createShaderModule({ code.c_str(), stage, (std::string("Shader Module: ") + fileName).c_str() }, &res);
-
-    if (!res.isOk()) {
-        return {};
-    }
-
-    debugGLSLSourceCode[handle.index()] = code;
-
-    return handle;
-}
 
 
 
-lvk::Holder<lvk::TextureHandle> load_texture(
-    const std::unique_ptr<lvk::IContext>& ctx, const char* fileName, lvk::TextureType textureType, bool sRGB)
+VulkanTexture load_texture(VulkanRenderDevice& vkDev, const char* fileName, VkImageViewType viewType, bool sRGB)
 {
     const bool isKTX = ends_with(fileName, ".ktx") || ends_with(fileName, ".KTX");
-
-    lvk::Result result;
-
-    lvk::Holder<lvk::TextureHandle> texture;
+    VulkanTexture texture = {};
 
     if (isKTX) {
         ktxTexture1* ktxTex = nullptr;
-
-        if (!LVK_VERIFY(ktxTexture1_CreateFromNamedFile(fileName, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTex) == KTX_SUCCESS)) {
-            LLOGW("Failed to load %s\n", fileName);
-            assert(0);
+        if (ktxTexture1_CreateFromNamedFile(fileName, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTex) != KTX_SUCCESS) {
+            printf("Failed to load KTX: %s\n", fileName);
             return {};
         }
-        SCOPE_EXIT
-        {
-          ktxTexture_Destroy(ktxTexture(ktxTex));
-        };
+        SCOPE_EXIT{ ktxTexture_Destroy(ktxTexture(ktxTex)); };
 
-        lvk::Result result;
+        texture.width = ktxTex->baseWidth;
+        texture.height = ktxTex->baseHeight;
+        texture.depth = 1;
 
-        const lvk::Format format = [](uint32_t glInternalFormat) {
-            switch (glInternalFormat) {
-            case GL_COMPRESSED_RGBA_BPTC_UNORM:
-                return lvk::Format_BC7_RGBA;
-            case GL_RGBA8:
-                return lvk::Format_RGBA_UN8;
-            case GL_RG16F:
-                return lvk::Format_RG_F16;
-            case GL_RGBA16F:
-                return lvk::Format_RGBA_F16;
-            case GL_RGBA32F:
-                return lvk::Format_RGBA_F32;
-            default:
-                LLOGW("Unsupported pixel format (%u)\n", glInternalFormat);
-                assert(0);
+ 
+        switch (ktxTex->glInternalformat) {
+        case 0x8E8F: texture.format = VK_FORMAT_BC6H_UFLOAT_BLOCK; break;       // GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT
+        case 0x8E8C: texture.format = VK_FORMAT_BC7_UNORM_BLOCK; break;         // GL_COMPRESSED_RGBA_BPTC_UNORM
+        case 0x881A: texture.format = VK_FORMAT_R16G16B16A16_SFLOAT; break;     // GL_RGBA16F
+        case 0x8058: texture.format = VK_FORMAT_R8G8B8A8_UNORM; break;          // GL_RGBA8
+        default:
+            texture.format = ktxTexture1_GetVkFormat(ktxTex);
+            if (texture.format == VK_FORMAT_UNDEFINED) {
+                printf("WARNING: Unknown KTX Format 0x%X. Using RGBA16F.\n", ktxTex->glInternalformat);
+                texture.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             }
-            return lvk::Format_Invalid;
-            }(ktxTex->glInternalformat);
+            break;
+        }
 
-        texture = ctx->createTexture(
-            {
-                .type = textureType,
-                .format = format,
-                .dimensions = {ktxTex->baseWidth, ktxTex->baseHeight, 1},
-                .usage = lvk::TextureUsageBits_Sampled,
-                .numMipLevels = ktxTex->numLevels,
-                .data = ktxTex->pData,
-                .dataNumMipLevels = ktxTex->numLevels,
-                .debugName = fileName,
-            },
-            fileName, &result);
+        const uint32_t layerCount = ktxTex->isCubemap ? 6 : 1;
+        const VkImageCreateFlags flags = ktxTex->isCubemap ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
+        const VkImageViewType ktxViewType = ktxTex->isCubemap ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
+
+        
+        create_image(vkDev.device, vkDev.physicalDevice, texture.width, texture.height, texture.format,
+            VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, texture.image.image, texture.image.imageMemory, flags, ktxTex->numLevels);
+
+        
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingMemory;
+        create_buffer(vkDev.device, vkDev.physicalDevice, ktxTex->dataSize,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer, stagingMemory);
+        upload_buffer_data(vkDev, stagingMemory, 0, ktxTex->pData, ktxTex->dataSize);
+
+        
+        std::vector<VkBufferImageCopy> regions;
+        for (uint32_t level = 0; level < ktxTex->numLevels; ++level) {
+            for (uint32_t layer = 0; layer < layerCount; ++layer) {
+                ktx_size_t offset;
+                ktxTexture_GetImageOffset(ktxTexture(ktxTex), level, 0, layer, &offset);
+
+                VkBufferImageCopy region = {};
+                region.bufferOffset = offset;
+                region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                region.imageSubresource.mipLevel = level;
+                region.imageSubresource.baseArrayLayer = layer;
+                region.imageSubresource.layerCount = 1;
+                region.imageExtent.width = std::max(1u, ktxTex->baseWidth >> level);
+                region.imageExtent.height = std::max(1u, ktxTex->baseHeight >> level);
+                region.imageExtent.depth = 1;
+                regions.push_back(region);
+            }
+        }
+
+        
+        VkCommandBuffer cmd = begin_single_time_commands(vkDev);
+        transition_image_layout_cmd(cmd, texture.image.image, texture.format,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            layerCount, ktxTex->numLevels);
+        vkCmdCopyBufferToImage(cmd, stagingBuffer, texture.image.image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)regions.size(), regions.data());
+        transition_image_layout_cmd(cmd, texture.image.image, texture.format,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            layerCount, ktxTex->numLevels);
+        end_single_time_commands(vkDev, cmd);
+
+        vkDestroyBuffer(vkDev.device, stagingBuffer, nullptr);
+        vkFreeMemory(vkDev.device, stagingMemory, nullptr);
+
+        create_image_view(vkDev.device, texture.image.image, texture.format,
+            VK_IMAGE_ASPECT_COLOR_BIT, &texture.image.imageView, ktxViewType, layerCount, ktxTex->numLevels);
     }
     else {
-        LVK_ASSERT(textureType == lvk::TextureType_2D);
-
-        int w, h, comp;
-        const uint8_t* img = stbi_load(fileName, &w, &h, &comp, 4);
-
-        SCOPE_EXIT
-        {
-          if (img)
-            stbi_image_free((void*)img);
-        };
-
+        // for HDR
+        int w, h;
+        const float* img = stbi_loadf(fileName, &w, &h, nullptr, 4);
         if (!img) {
-            printf("Unable to load %s. File not found.\n", fileName);
+            printf("Failed to load HDR: %s\n", fileName);
             return {};
+        }
+        SCOPE_EXIT{ stbi_image_free((void*)img); };
+
+        Bitmap in;
+        init_bitmap_from_data(&in, w, h, 4, eBitmapFormat_Float, img);
+
+        Bitmap verticalCross = convert_equirectangular_map_to_vertial_cross(in);
+        Bitmap cubemap = convert_vertical_cross_to_cubemap_faces(verticalCross);
+
+        
+        texture.width = cubemap.w;   
+        texture.height = cubemap.h;  
+        texture.depth = 6;           
+        texture.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+
+        VkImageCreateInfo imageInfo = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,  
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+            .extent = { (uint32_t)cubemap.w, (uint32_t)cubemap.h, 1 },  
+            .mipLevels = 1,
+            .arrayLayers = 6,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
         };
 
-        texture = ctx->createTexture(
-            {
-                .type = lvk::TextureType_2D,
-                .format = sRGB ? lvk::Format_RGBA_SRGB8 : lvk::Format_RGBA_UN8,
-                .dimensions = {(uint32_t)w, (uint32_t)h},
-                .usage = lvk::TextureUsageBits_Sampled,
-                .data = img,
-                .debugName = fileName,
-            },
-            fileName, &result);
+        VK_CHECK(vkCreateImage(vkDev.device, &imageInfo, nullptr, &texture.image.image));
+
+        VkMemoryRequirements memReqs;
+        vkGetImageMemoryRequirements(vkDev.device, texture.image.image, &memReqs);
+
+        VkMemoryAllocateInfo allocInfo = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = memReqs.size,
+            .memoryTypeIndex = find_memory_type(vkDev.physicalDevice, memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+        };
+
+        VK_CHECK(vkAllocateMemory(vkDev.device, &allocInfo, nullptr, &texture.image.imageMemory));
+        VK_CHECK(vkBindImageMemory(vkDev.device, texture.image.image, texture.image.imageMemory, 0));
+
+        VkDeviceSize imageSize = cubemap.data.size();
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingMemory;
+
+        create_buffer(vkDev.device, vkDev.physicalDevice, imageSize,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer, stagingMemory);
+
+        upload_buffer_data(vkDev, stagingMemory, 0, cubemap.data.data(), imageSize);
+
+        VkCommandBuffer cmdBuf = begin_single_time_commands(vkDev);
+
+        transition_image_layout_cmd(cmdBuf, texture.image.image, VK_FORMAT_R32G32B32A32_SFLOAT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6, 1);
+
+        std::vector<VkBufferImageCopy> regions;
+        VkDeviceSize faceSize = imageSize / 6;
+        for (uint32_t face = 0; face < 6; face++) {
+            VkBufferImageCopy region = {
+                .bufferOffset = face * faceSize,
+                .bufferRowLength = 0,
+                .bufferImageHeight = 0,
+                .imageSubresource = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .mipLevel = 0,
+                    .baseArrayLayer = face,
+                    .layerCount = 1
+                },
+                .imageOffset = {0, 0, 0},
+                .imageExtent = {(uint32_t)cubemap.w, (uint32_t)cubemap.h, 1}  
+            };
+            regions.push_back(region);
+        }
+
+        vkCmdCopyBufferToImage(cmdBuf, stagingBuffer, texture.image.image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6, regions.data());
+
+        transition_image_layout_cmd(cmdBuf, texture.image.image, VK_FORMAT_R32G32B32A32_SFLOAT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6, 1);
+
+        end_single_time_commands(vkDev, cmdBuf);
+
+        vkDestroyBuffer(vkDev.device, stagingBuffer, nullptr);
+        vkFreeMemory(vkDev.device, stagingMemory, nullptr);
+
+        VkImageViewCreateInfo viewInfo = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = texture.image.image,
+            .viewType = VK_IMAGE_VIEW_TYPE_CUBE,  
+            .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 6
+            }
+        };
+
+        VK_CHECK(vkCreateImageView(vkDev.device, &viewInfo, nullptr, &texture.image.imageView));
     }
 
-    if (!result.isOk()) {
-        printf("Unable to load %s. Reason: %s\n", fileName, result.message);
-    }
+    create_texture_sampler(vkDev.device, &texture.sampler);
+    texture.desiredLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    setVkImageName(vkDev, texture.image.image, fileName);
+
 
     return texture;
 }

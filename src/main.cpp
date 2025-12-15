@@ -1,255 +1,266 @@
-#include <vk_app.h>
-#include <camera.h>
-#include <line_canvas.h>
+#include "vk_app.h"       
+#include "utils_gltf.h"   
+#include "camera.h"       
+#include <glm/gtx/rotate_vector.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
 
-#include <assimp/cimport.h>
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
-#include <vector>
-#include <stb/stb_image_resize2.h>
 
-const glm::vec3 kInitialCameraPos = glm::vec3(0.0f, 1.0f, -1.5f);
-const glm::vec3 kInitialCameraTarget = glm::vec3(0.0f, 0.5f, 0.0f);
-const glm::vec3 kInitialCameraAngles = glm::vec3(-18.5f, 180.0f, 0.0f);
+#include <glfw/glfw3.h>
 
-const char* cameraType = "FirstPerson";
-const char* comboBoxItems[] = { "FirstPerson", "MoveTo" };
-const char* currentComboBoxItem = cameraType;
 
-struct VertexData {
-    glm::vec3 pos;
-    glm::vec3 n;
-    glm::vec2 tc;
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
+
+GLTFContext gltf;
+GLTFIntrospective gltfInspector = {
+    .showAnimations = false,
+    .showCameras = false,
+    .showMaterials = true,
 };
 
-lvk::Holder<lvk::RenderPipelineHandle> pipeline;
-lvk::Holder<lvk::RenderPipelineHandle> pipelineSkybox;
-lvk::Holder<lvk::BufferHandle> bufferIndices;
-lvk::Holder<lvk::BufferHandle> bufferVertices;
-lvk::Holder<lvk::BufferHandle> bufferPerFrame;
-lvk::Holder<lvk::TextureHandle> texture;
-lvk::Holder<lvk::TextureHandle> cubemapTex;
-std::vector<uint32_t> indices;
 
-LinearGraph fpsGraph;
-LinearGraph sinGraph;
-LineCanvas2D canvas2d;
-LineCanvas3D canvas3d;
-
-void draw_frame(App* app, uint32_t width, uint32_t height, float aspectRatio, float deltaSeconds);
-
-void reinitCamera(App* app)
-{
-    if (!strcmp(cameraType, "FirstPerson")) {
-        init_camera_first_person(&app->camera, kInitialCameraPos, kInitialCameraTarget, glm::vec3(0.0f, 1.0f, 0.0f));
-    }
-    else if (!strcmp(cameraType, "MoveTo")) {
-
-        init_camera_move_to(&app->camera, kInitialCameraPos, kInitialCameraAngles);
-    }
-}
+const bool rotateModel = false;
+const glm::vec3 kInitialCameraTarget = glm::vec3(0.0f, 0.5f, 0.0f);
+const glm::vec3 kInitialCameraPos = glm::vec3(0.0f, 1.0f, -1.5f);
+void resizeOffscreenIfNeeded(GLTFContext& gltf, uint32_t width, uint32_t height);
 
 int main()
 {
     App app{};
-    AppConfig config = { .initialCameraPos = kInitialCameraPos, .initialCameraTarget = kInitialCameraTarget };
-    init_app(&app, &config);
+    AppConfig cfg = { .initialCameraPos = kInitialCameraPos, .initialCameraTarget = kInitialCameraTarget , .showGLTFInspector = true };
 
-    init_line_canvas2D(&canvas2d);
-    init_line_canvas3D(&canvas3d);
-    init_graph(&fpsGraph, "##fpsGraph", 2048);
-    init_graph(&sinGraph, "##sinGraph", 2048);
+    init_app(&app, &cfg);
 
+   // generate_BRDF_LUT(app.vkDev, "D:/codes/more codes/c++/PBR/data/brdfLUT.ktx");
 
-    lvk::IContext& ctx = *app.ctx;
+   
     
-        lvk::Holder<lvk::ShaderModuleHandle> vert = load_shader_module(app.ctx, "D:/codes/more codes/c++/PBR/src/main.vert");
-        lvk::Holder<lvk::ShaderModuleHandle> frag = load_shader_module(app.ctx, "D:/codes/more codes/c++/PBR/src/main.frag");
-        lvk::Holder<lvk::ShaderModuleHandle> vertSkybox = load_shader_module(app.ctx, "D:/codes/more codes/c++/PBR/src/skybox.vert");
-        lvk::Holder<lvk::ShaderModuleHandle> fragSkybox = load_shader_module(app.ctx, "D:/codes/more codes/c++/PBR/src/skybox.frag");
+   gltf.inspector = &gltfInspector;
+    GLTFContext_init(&gltf, &app);
 
-        const lvk::VertexInput vdesc = {
-            .attributes = { {.location = 0, .format = lvk::VertexFormat::Float3, .offset = offsetof(VertexData, pos) },
-                               {.location = 1, .format = lvk::VertexFormat::Float3, .offset = offsetof(VertexData, n) },
-                               {.location = 2, .format = lvk::VertexFormat::Float2, .offset = offsetof(VertexData, tc) }, },
-            .inputBindings = { {.stride = sizeof(VertexData) } },
-        };
 
-        pipeline = ctx.createRenderPipeline({
-            .vertexInput = vdesc,
-            .smVert = vert,
-            .smFrag = frag,
-            .color = { {.format = ctx.getSwapchainFormat() } },
-            .depthFormat = get_depth_format_app(&app),
-            .cullMode = lvk::CullMode_Back,
-            });
+    /*
+    generate_prefiltered_envmap(gltf,
+        "D:/codes/more codes/c++/PBR/data/kiara_1_dawn_8k.hdr",
+        "D:/codes/more codes/c++/PBR/data/kiara_1_dawn_8k_prefilter.ktx",
+        "D:/codes/more codes/c++/PBR/data/kiara_1_dawn_8k_charlie.ktx",
+        "D:/codes/more codes/c++/PBR/data/kiara_1_dawn_8k_irradiance.ktx"); */
 
-        pipelineSkybox = ctx.createRenderPipeline({
-            .smVert = vertSkybox,
-            .smFrag = fragSkybox,
-            .color = { {.format = ctx.getSwapchainFormat() } },
-            .depthFormat = get_depth_format_app(&app),
-            });
 
-        const aiScene* scene = aiImportFile("D:/codes/more codes/c++/PBR/rubber_duck/scene.gltf", aiProcess_Triangulate);
-        if (!scene || !scene->HasMeshes()) {
-            printf("Unable to load data/rubber_duck/scene.gltf\n");
-            exit(255);
-        }
+    
+    std::string model = "DragonDispersion";
 
-        const aiMesh* mesh = scene->mMeshes[0];
-        std::vector<VertexData> vertices;
-        for (uint32_t i = 0; i != mesh->mNumVertices; i++) {
-            const aiVector3D v = mesh->mVertices[i];
-            const aiVector3D n = mesh->mNormals[i];
-            const aiVector3D t = mesh->mTextureCoords[0][i];
-            vertices.push_back({ .pos = glm::vec3(v.x, v.y, v.z), .n = glm::vec3(n.x, n.y, n.z), .tc = glm::vec2(t.x, t.y) });
-        }
-        for (uint32_t i = 0; i != mesh->mNumFaces; i++) {
-            for (uint32_t j = 0; j != 3; j++)
-                indices.push_back(mesh->mFaces[i].mIndices[j]);
-        }
-        aiReleaseImport(scene);
+    
+    std::string gltfPath = "D:/codes/more codes/c++/PBR/data/glTF-Sample-Assets/Models/" + model + "/glTF/" + model + ".gltf";
+    std::string basePath = "D:/codes/more codes/c++/PBR/data/glTF-Sample-Assets/Models/" + model + "/glTF/";
 
-        bufferIndices = ctx.createBuffer({ .usage = lvk::BufferUsageBits_Index, .storage = lvk::StorageType_Device, .size = sizeof(uint32_t) * indices.size(), .data = indices.data(), .debugName = "Buffer: indices" });
-        bufferVertices = ctx.createBuffer({ .usage = lvk::BufferUsageBits_Vertex, .storage = lvk::StorageType_Device, .size = sizeof(VertexData) * vertices.size(), .data = vertices.data(), .debugName = "Buffer: vertices" });
+    loadGLTF(gltf, gltfPath.c_str(), basePath.c_str());
 
-        struct PerFrameData { glm::mat4 model, view, proj; glm::vec4 cameraPos; uint32_t tex = 0, texCube = 0; };
-        bufferPerFrame = ctx.createBuffer({ .usage = lvk::BufferUsageBits_Uniform, .storage = lvk::StorageType_Device, .size = sizeof(PerFrameData), .debugName = "Buffer: per-frame" });
-
-        texture = load_texture(app.ctx, "D:/codes/more codes/c++/PBR/rubber_duck/textures/Duck_baseColor.png");
-
-        
+    run_app(
+        &app,
+        [](App* app, uint32_t width, uint32_t height, float aspectRatio, float deltaSeconds)
         {
-            int w, h;
-            const float* img = stbi_loadf("D:/codes/more codes/c++/PBR/data/empty_play_room_4k.hdr", &w, &h, nullptr, 4);
-            Bitmap in;
-            init_bitmap_from_data(&in,w, h, 4, eBitmapFormat_Float, img);
-            Bitmap out = convert_equirectangular_map_to_vertial_cross(in);
-            stbi_image_free((void*)img);
+            VulkanRenderDevice& vkDev = app->vkDev;
 
-            //stbi_write_hdr(".cache/screenshot.hdr", out.w, out.h, out.comp, (const float*)out.data.data());
-
-            Bitmap cubemap = convert_vertical_cross_to_cubemap_faces(out);
-
-            cubemapTex = ctx.createTexture({
-                .type = lvk::TextureType_Cube,
-                .format = lvk::Format_RGBA_F32,
-                .dimensions = {(uint32_t)cubemap.w, (uint32_t)cubemap.h},
-                .usage = lvk::TextureUsageBits_Sampled,
-                .data = cubemap.data.data(),
-                .debugName = "data/piazza_bologni_1k.hdr",
-                });
-        }
-    
-    run_app(&app, (DrawFrameFunc)draw_frame);
+            
+            if (vkDev.framebufferWidth != width || vkDev.framebufferHeight != height)
+            {
+                vkDeviceWaitIdle(vkDev.device);
+                recreate_swapchain(app);
+                resizeOffscreenIfNeeded(gltf, vkDev.framebufferWidth, vkDev.framebufferHeight);
+                return;
+            }
+            //first frame
+            if (gltf.offscreenTex.image.image == VK_NULL_HANDLE) {
+                vkDeviceWaitIdle(vkDev.device);
+                resizeOffscreenIfNeeded(gltf, width, height);
+            }
 
 
+            vkWaitForFences(vkDev.device, 1, &app->inFlightFences[app->currentFrame], VK_TRUE, UINT64_MAX);
+            uint32_t imageIndex;
+            VkResult result = vkAcquireNextImageKHR(vkDev.device, vkDev.swapchain, UINT64_MAX,
+                app->imageAvailableSemaphores[app->currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+            if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+            {
+                vkDeviceWaitIdle(vkDev.device);
+                recreate_swapchain(app);
+                resizeOffscreenIfNeeded(gltf, vkDev.framebufferWidth, vkDev.framebufferHeight);
+                return;
+            }
+
+
+            vkResetFences(vkDev.device, 1, &app->inFlightFences[imageIndex]);
+
+            VkCommandBuffer cmd = vkDev.commandBuffers[imageIndex];
+            vkResetCommandBuffer(cmd, 0);
+
+            VkCommandBufferBeginInfo beginInfo = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
+
+            const glm::mat4 m1 = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 m2 = glm::rotate(glm::mat4(1.0f), rotateModel ? (float)glfwGetTime() : 0.0f, glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 model = m2 * m1;
+
+            glm::mat4 view = get_view_matrix_camera(&app->camera);
+            glm::mat4 proj = glm::perspective(glm::radians(60.0f), aspectRatio, 0.1f, 1000.0f);
+            updateCamera(gltf, model, view, proj, aspectRatio);
+
+
+            renderGLTF(
+                gltf,
+                imageIndex,
+                cmd,
+                app->gridRenderPass,
+                app->swapchainFramebuffers[imageIndex],
+                vkDev.framebufferWidth, vkDev.framebufferHeight,  
+                model, view, proj,
+                false
+            );
+            //TODO:might not needed anymore as I added the barrier on the utils or whatever
+            //UPDATE: I DO NEED THIS
+            VkImageMemoryBarrier barrier = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                .dstAccessMask = 0, 
+                .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = vkDev.swapchainImages[imageIndex],
+                .subresourceRange = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1
+                }
+            };
+
+            vkCmdPipelineBarrier(
+                cmd,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                0,
+                0, nullptr,
+                0, nullptr,
+                1, &barrier
+            );
+
+            VK_CHECK(vkEndCommandBuffer(cmd));
+
+
+            VkSubmitInfo submitInfo = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
+            VkSemaphore waitSemaphores[] = { app->imageAvailableSemaphores[app->currentFrame] };
+            VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = waitSemaphores;
+            submitInfo.pWaitDstStageMask = waitStages;
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = &cmd;
+            VkSemaphore signalSemaphores[] = { app->renderFinishedSemaphores[imageIndex] };
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = signalSemaphores;
+
+            VK_CHECK(vkQueueSubmit(vkDev.graphicsQueue, 1, &submitInfo, app->inFlightFences[imageIndex]));
+
+          
+            VkPresentInfoKHR presentInfo = { .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
+            presentInfo.waitSemaphoreCount = 1;
+            presentInfo.pWaitSemaphores = signalSemaphores;
+            VkSwapchainKHR swapChains[] = { vkDev.swapchain };
+            presentInfo.swapchainCount = 1;
+            presentInfo.pSwapchains = swapChains;
+            presentInfo.pImageIndices = &imageIndex;
+
+            result = vkQueuePresentKHR(vkDev.graphicsQueue, &presentInfo);
+
+            if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+                recreate_swapchain(app);
+            }
+
+            app->currentFrame = (app->currentFrame + 1) % app->inFlightFences.size();
+        });
+
+    vkDeviceWaitIdle(app.vkDev.device);
+
+    GLTFContext_destroy(&gltf);
+    destroy_app(&app);
+   
+
+    return 0;
 }
 
-void draw_frame(App* app, uint32_t width, uint32_t height, float aspectRatio, float deltaSeconds)
+void resizeOffscreenIfNeeded(GLTFContext& gltf, uint32_t width, uint32_t height)
 {
-    if (app->camera.positioner.type == CAMERA_POSITIONER_MOVE_TO) {
-        update_move_to(
-            &app->camera.positioner.moveTo,
-            deltaSeconds,
-            app->mouseState.pos,
-            ImGui::GetIO().WantCaptureMouse ? false : app->mouseState.pressedLeft);
-    }
-
-    const glm::mat4 p = glm::perspective(glm::radians(60.0f), aspectRatio, 0.1f, 1000.0f);
-    const glm::mat4 m1 = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1, 0, 0));
-    const glm::mat4 m2 = glm::rotate(glm::mat4(1.0f), (float)glfwGetTime(), glm::vec3(0.0f, 1.0f, 0.0f));
-
-    struct PerFrameData { glm::mat4 model, view, proj; glm::vec4 cameraPos; uint32_t tex = 0, texCube = 0; };
-    const PerFrameData perFrameData = {
-        .model = m2 * m1,
-        .view = get_view_matrix_camera(&app->camera),
-        .proj = p,
-        .cameraPos = glm::vec4(get_position_camera(&app->camera), 1.0f),
-        .tex = texture.index(),
-        .texCube = cubemapTex.index(),
-    };
-
-    const lvk::RenderPass renderPass = {
-        .color = { {.loadOp = lvk::LoadOp_Clear, .clearColor = { 1.0f, 1.0f, 1.0f, 1.0f } } },
-        .depth = {.loadOp = lvk::LoadOp_Clear, .clearDepth = 1.0f }
-    };
-    const lvk::Framebuffer framebuffer = {
-        .color = { {.texture = app->ctx->getCurrentSwapchainTexture() } },
-        .depthStencil = {.texture = get_depth_texture(app) },
-    };
-
-    lvk::ICommandBuffer& buf = app->ctx->acquireCommandBuffer();
-    buf.cmdUpdateBuffer(bufferPerFrame, perFrameData);
-
-    buf.cmdBeginRendering(renderPass, framebuffer);
-    {
-        buf.cmdPushDebugGroupLabel("Skybox", 0xff0000ff);
-        buf.cmdBindRenderPipeline(pipelineSkybox);
-        buf.cmdPushConstants(app->ctx->gpuAddress(bufferPerFrame));
-        buf.cmdDraw(36);
-        buf.cmdPopDebugGroupLabel();
-
-        buf.cmdPushDebugGroupLabel("Mesh", 0xff0000ff);
-        buf.cmdBindVertexBuffer(0, bufferVertices);
-        buf.cmdBindRenderPipeline(pipeline);
-        buf.cmdBindDepthState({ .compareOp = lvk::CompareOp_Less, .isDepthWriteEnabled = true });
-        buf.cmdBindIndexBuffer(bufferIndices, lvk::IndexFormat_UI32);
-        buf.cmdDrawIndexed(indices.size());
-        buf.cmdPopDebugGroupLabel();
-
-        app->imgui->beginFrame(framebuffer);
-
-        draw_memo_app(app);
-        draw_fps(app);
-
-        ImGui::Begin("Camera Controls", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        if (ImGui::BeginCombo("##combo", currentComboBoxItem))
-        {
-            for (int n = 0; n < IM_ARRAYSIZE(comboBoxItems); n++) {
-                const bool isSelected = (currentComboBoxItem == comboBoxItems[n]);
-                if (ImGui::Selectable(comboBoxItems[n], isSelected))
-                    currentComboBoxItem = comboBoxItems[n];
-                if (isSelected)
-                    ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-        if (currentComboBoxItem && strcmp(currentComboBoxItem, cameraType)) {
-            cameraType = currentComboBoxItem;
-            reinitCamera(app);
-        }
-        ImGui::End();
-
-        render_graph(&sinGraph, 0, height * 0.7f, width, height * 0.2f, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
-        render_graph(&fpsGraph, 0, height * 0.8f, width, height * 0.2f);
-
-        clear_line_canvas2D(&canvas2d);
-        push_line_canvas2D(&canvas2d, { 100, 300 }, { 100, 400 }, glm::vec4(1, 0, 0, 1));
-        push_line_canvas2D(&canvas2d, { 100, 400 }, { 200, 400 }, glm::vec4(0, 1, 0, 1));
-        push_line_canvas2D(&canvas2d, { 200, 400 }, { 200, 300 }, glm::vec4(0, 0, 1, 1));
-        push_line_canvas2D(&canvas2d, { 200, 300 }, { 100, 300 }, glm::vec4(1, 1, 0, 1));
-        render_line_canvas2D(&canvas2d, "##plane");
-
-        clear_line_canvas3D(&canvas3d);
-        set_matrix_line_canvas3D(&canvas3d,perFrameData.proj* perFrameData.view);
-        plane_line_canvas3D(&canvas3d, glm::vec3(0, 0, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1), 40, 40, 10.0f, 10.0f, glm::vec4(1, 0, 0, 1), glm::vec4(0, 1, 0, 1));
-        box_line_canvas3D(&canvas3d, glm::mat4(1.0f), BoundingBox(glm::vec3(-2), glm::vec3(+2)), glm::vec4(1, 1, 0, 1));
-        frustum_line_canvas3D(&canvas3d,
-            glm::lookAt(glm::vec3(cos(glfwGetTime()), kInitialCameraPos.y, sin(glfwGetTime())), kInitialCameraTarget, glm::vec3(0.0f, 1.0f, 0.0f)),
-            glm::perspective(glm::radians(60.0f), aspectRatio, 0.1f, 30.0f), glm::vec4(1, 1, 1, 1));
-        render_line_canvas3D(&canvas3d, *app->ctx.get(), framebuffer, buf);
-
-        ImGui::End();
-
-        app->imgui->endFrame(buf);
-    }
-    buf.cmdEndRendering();
-
-    app->ctx->submit(buf, app->ctx->getCurrentSwapchainTexture());
+    VulkanRenderDevice& vkDev = gltf.app->vkDev;
 
     
-    add_point_graph(&fpsGraph, (float)get_fps(&app->fpsCounter));
-    add_point_graph(&sinGraph, sinf((float)glfwGetTime() * 20.0f));
+    if (gltf.offscreenTex.image.image != VK_NULL_HANDLE &&
+        gltf.offscreenTex.width == width &&
+        gltf.offscreenTex.height == height)
+    {
+        return;  
+    }
+
+    printf("Resizing offscreen: %dx%d -> %dx%d\n",
+        gltf.offscreenTex.width, gltf.offscreenTex.height,
+        width, height);
+
+    
+    if (gltf.offscreenTex.image.imageView) {
+        gltf.textureIndexMap.erase(gltf.offscreenTex.image.imageView);
+    }
+    if (gltf.offscreenTex.image.image) {
+        destroy_vulkan_image(vkDev.device, gltf.offscreenTex.image);
+    }
+    if (gltf.offscreenFbView) {
+        vkDestroyImageView(vkDev.device, gltf.offscreenFbView, nullptr);
+        gltf.offscreenFbView = VK_NULL_HANDLE;
+    }
+
+    gltf.offscreenTex.width = width;
+    gltf.offscreenTex.height = height;
+    gltf.offscreenTex.format = VK_FORMAT_B8G8R8A8_UNORM;
+
+    uint32_t mips = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+
+    create_image(vkDev.device, vkDev.physicalDevice, width, height, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, gltf.offscreenTex.image.image, gltf.offscreenTex.image.imageMemory, 0, mips);
+
+    create_image_view(vkDev.device, gltf.offscreenTex.image.image, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT,
+        &gltf.offscreenTex.image.imageView, VK_IMAGE_VIEW_TYPE_2D, 1, mips);
+    create_image_view(vkDev.device, gltf.offscreenTex.image.image, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT,
+        &gltf.offscreenFbView, VK_IMAGE_VIEW_TYPE_2D, 1, 1);
+
+    
+    VkCommandBuffer tempCmd;
+    VkCommandBufferAllocateInfo allocInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = vkDev.commandPool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1
+    };
+    vkAllocateCommandBuffers(vkDev.device, &allocInfo, &tempCmd);
+
+    VkCommandBufferBeginInfo beginInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+    };
+    vkBeginCommandBuffer(tempCmd, &beginInfo);
+
+    transition_image_layout_cmd(tempCmd, gltf.offscreenTex.image.image, VK_FORMAT_B8G8R8A8_UNORM,
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, mips);
+
+    vkEndCommandBuffer(tempCmd);
+
+    VkSubmitInfo submitInfo = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &tempCmd };
+    vkQueueSubmit(vkDev.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vkDev.graphicsQueue);
+    vkFreeCommandBuffers(vkDev.device, vkDev.commandPool, 1, &tempCmd);
+
+    get_texture_index(gltf, gltf.offscreenTex);
 }
