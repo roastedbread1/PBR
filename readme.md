@@ -1,13 +1,35 @@
-work in progress of my vulkan engine/renderer/whatever based on an awesome book 3D Graphics Rendering Cookbook: A comprehensive guide to exploring rendering algorithms in modern OpenGL and Vulkan  by Sergey Kosarevsky and Viktor Latypov
+# Vulkan PBR Renderer
 
-wont be explaining much, the build is straightforward using cmake, I do need to clean up some things like why does the glm is out there
+A work-in-progress of my Vulkan rendering engine
 
-anyway if you are keen to try, download the glTF sample assets by khronos and some hdr images, might need to change all the paths as they are an absolute path
+![Dragon Dispersion](data/screenshots/dragon_dispersion.png)
 
-this works on my machine :)
+## Features
+ Physically Based Rendering (PBR), glTF 2.0 support, Image-Based Lighting (IBL),  real-time upscaling via NVIDIA DLSS.
 
-some screenshots!
-![dragon dispersion](data/screenshots/dragon_dispersion.png)
+## Dependencies 
+Vulkan SDK, GLFW, GLM, Assimp, ImGui, KTX-Software, MeshOptimizer, Volk, SPIRV-Headers/Tools
+
+## Build Instructions
+
+### 1. Prerequisites
+Vulkan SDK, NVIDIA DLSS SDK
+
+### 2. Download DLSS SDK
+This project requires the proprietary NVIDIA NGX SDK to build the DLSS features.
+1.  git clone the SDK from [github.com/NVIDIA/DLSS](https://github.com/NVIDIA/DLSS).
+3.  **IMPORTANT:** You must place the SDK in the root of the project or open `CMakeLists.txt` and update the `DLSS_ROOT` variable to point to your local extraction path.
+
+### 3. Build with CMake
+1. **VERY IMORTANT:** if you're reading this it means that the path for the assets and shaders are still hardcoded in the code so you might need to change that
+
+```bash
+
+git clone https://github.com/roastedbread1/PBR.git
+cd PBR
+cmake --build . 
+```
+Some Screenshots
 ![damaged_helmet](data/screenshots/damaged_helmet.png)
 ![a_beautiful_game](data/screenshots/a_beautiful_game.png)
 ![compare_ior](data/screenshots/compare_ior.png)
