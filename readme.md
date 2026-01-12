@@ -18,7 +18,7 @@ Vulkan SDK, NVIDIA DLSS SDK
 ### 2. Download DLSS SDK
 This project requires the proprietary NVIDIA NGX SDK to build the DLSS features.
 1.  git clone the SDK from [github.com/NVIDIA/DLSS](https://github.com/NVIDIA/DLSS).
-3.  **IMPORTANT:** You must place the SDK in the root of the project or open `CMakeLists.txt` and update the `DLSS_ROOT` variable to point to your local extraction path.
+3.  **IMPORTANT:** You must place the SDK in the root of the project or open `CMakeLists.txt` and update the `DLSS_ROOT` variable to point to the path of your choosing.
 
 ### 3. Build with CMake
 1. **VERY IMORTANT:** if you're reading this it means that the path for the assets and shaders are still hardcoded in the code so you might need to change that
