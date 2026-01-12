@@ -251,7 +251,7 @@ namespace
 
         gltf.cubemapIndexMap[tex.image.imageView] = newIndex;
 
-        // Update descriptor set 2, binding 0 (kTexturesCube)
+        // set 2, binding 0 (kTexturesCube)
         update_descriptor_slot(gltf.app->vkDev, gltf.bindlessSet2, 0, newIndex, tex.image.imageView, VK_NULL_HANDLE);
 
         return newIndex;
@@ -378,6 +378,545 @@ namespace
 
     return newIndex;
 }
+
+ void createDLSSRenderTargets(GLTFContext& gltf, uint32_t renderWidth, uint32_t renderHeight, uint32_t displayWidth, uint32_t displayHeight)
+ {
+     VulkanRenderDevice& vkDev = gltf.app->vkDev;
+     gltf.dlssRenderWidth = renderWidth;
+     gltf.dlssRenderHeight = renderHeight;
+     gltf.displayWidth = displayWidth;
+     gltf.displayHeight = displayHeight;
+
+     //color input aka render res
+     create_image(vkDev.device, vkDev.physicalDevice,renderWidth, renderHeight,
+         VK_FORMAT_R16G16B16A16_SFLOAT,
+         VK_IMAGE_TILING_OPTIMAL,
+         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+         gltf.dlssColorInput.image.image,
+         gltf.dlssColorInput.image.imageMemory);
+
+     create_image_view(vkDev.device, gltf.dlssColorInput.image.image,
+         VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT,
+         &gltf.dlssColorInput.image.imageView);
+
+     gltf.dlssColorInput.width = renderWidth;
+     gltf.dlssColorInput.height = renderHeight;
+     gltf.dlssColorInput.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+
+
+     //color out aka display res
+     create_image(vkDev.device, vkDev.physicalDevice,
+         displayWidth, displayHeight,
+         VK_FORMAT_R16G16B16A16_SFLOAT,
+         VK_IMAGE_TILING_OPTIMAL,
+         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+         gltf.dlssColorOutput.image.image,
+         gltf.dlssColorOutput.image.imageMemory);
+
+     create_image_view(vkDev.device, gltf.dlssColorOutput.image.image,
+         VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT,
+         &gltf.dlssColorOutput.image.imageView);
+
+     gltf.dlssColorOutput.width = displayWidth;
+     gltf.dlssColorOutput.height = displayHeight;
+     gltf.dlssColorOutput.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+
+     //depth buffer @ render res
+     VkFormat depthFormat = find_depth_format(vkDev.physicalDevice);
+     create_image(vkDev.device, vkDev.physicalDevice,
+         renderWidth, renderHeight,
+         depthFormat,
+         VK_IMAGE_TILING_OPTIMAL,
+         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+         gltf.dlssDepthBuffer.image.image,
+         gltf.dlssDepthBuffer.image.imageMemory);
+
+     create_image_view(vkDev.device, gltf.dlssDepthBuffer.image.image,
+         depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT,
+         &gltf.dlssDepthBuffer.image.imageView);
+
+     gltf.dlssDepthBuffer.width = renderWidth;
+     gltf.dlssDepthBuffer.height = renderHeight;
+     gltf.dlssDepthBuffer.format = depthFormat;
+
+     //motion vectors @ render res
+     create_image(vkDev.device, vkDev.physicalDevice,
+         renderWidth, renderHeight,
+         VK_FORMAT_R16G16_SFLOAT,
+         VK_IMAGE_TILING_OPTIMAL,
+         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+         gltf.dlssMotionVectors.image.image,
+         gltf.dlssMotionVectors.image.imageMemory);
+
+     create_image_view(vkDev.device, gltf.dlssMotionVectors.image.image,
+         VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT,
+         &gltf.dlssMotionVectors.image.imageView);
+
+     gltf.dlssMotionVectors.width = renderWidth;
+     gltf.dlssMotionVectors.height = renderHeight;
+     gltf.dlssMotionVectors.format = VK_FORMAT_R16G16_SFLOAT;
+
+
+     VkCommandBuffer cmd = begin_single_time_commands(vkDev);
+
+     transition_image_layout_cmd(cmd, gltf.dlssColorInput.image.image, VK_FORMAT_R16G16B16A16_SFLOAT,
+         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+     transition_image_layout_cmd(cmd, gltf.dlssColorOutput.image.image, VK_FORMAT_R16G16B16A16_SFLOAT,
+         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1, 1);
+     transition_image_layout_cmd(cmd, gltf.dlssDepthBuffer.image.image, depthFormat,
+         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1, 1);
+     transition_image_layout_cmd(cmd, gltf.dlssMotionVectors.image.image, VK_FORMAT_R16G16_SFLOAT,
+         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+
+     end_single_time_commands(vkDev, cmd);
+
+     printf("DLSS render targets created: %ux%u -> %ux%u\n",
+         renderWidth, renderHeight, displayWidth, displayHeight);
+ }
+
+ void destroyDLSSRenderTargets(GLTFContext& gltf)
+ {
+     VkDevice device = gltf.app->vkDev.device;
+
+     destroy_vulkan_image(device, gltf.dlssColorInput.image);
+     destroy_vulkan_image(device, gltf.dlssColorOutput.image);
+     destroy_vulkan_image(device, gltf.dlssDepthBuffer.image);
+     destroy_vulkan_image(device, gltf.dlssMotionVectors.image);
+
+     gltf.dlssColorInput = {};
+     gltf.dlssColorOutput = {};
+     gltf.dlssDepthBuffer = {};
+     gltf.dlssMotionVectors = {};
+ }
+
+ void resizeDLSSRenderTargets(GLTFContext& gltf, uint32_t renderWidth, uint32_t renderHeight,
+     uint32_t displayWidth, uint32_t displayHeight)
+ {
+     if (gltf.dlssRenderWidth == renderWidth &&
+         gltf.dlssRenderHeight == renderHeight &&
+         gltf.displayWidth == displayWidth &&
+         gltf.displayHeight == displayHeight)
+     {
+         return;  // No resize needed
+     }
+
+     vkDeviceWaitIdle(gltf.app->vkDev.device);
+     destroyDLSSRenderTargets(gltf);
+     createDLSSRenderTargets(gltf, renderWidth, renderHeight, displayWidth, displayHeight);
+     gltf.dlssNeedsReset = true;
+ }
+
+
+ void render_GLTF(GLTFContext& gltf, uint32_t imageIndex, VkCommandBuffer cmd, const glm::mat4& model, const glm::mat4& view, const glm::mat4& proj, const glm::mat4& jitteredProj, bool useDLSS, bool rebuildRenderList)
+ {
+     VulkanRenderDevice& vkDev = gltf.app->vkDev;
+
+     uint32_t renderWidth = useDLSS ? gltf.dlssRenderWidth : vkDev.framebufferWidth;
+     uint32_t renderHeight = useDLSS ? gltf.dlssRenderHeight : vkDev.framebufferHeight;
+     uint32_t outputWidth = useDLSS ? gltf.displayWidth : vkDev.framebufferWidth;
+     uint32_t outputHeight = useDLSS ? gltf.displayHeight : vkDev.framebufferHeight;
+    
+     //maybe check depth tex
+
+     const glm::vec4 camPos = glm::inverse(view)[3];
+
+     if (rebuildRenderList || gltf.transforms.empty())
+     {
+         buildTransformsList(gltf);
+     }
+
+     sortTransparentNodes(gltf, camPos);
+
+     if (gltf.inspector)
+     {
+         for (uint32_t m = 0; m < gltf.inspector->materials.size(); m++) {
+             if (gltf.inspector->materials[m].modified) {
+                 gltf.inspector->materials[m].modified = false;
+                 gltf.matPerFrame.materials[m].materialTypeFlags =
+                     gltf.inspector->materials[m].currentMaterialMask;
+             }
+         }
+     }
+
+     if (gltf.isFirstFrame)
+     {
+         gltf.lastModel = model;
+         gltf.lastView = view;
+         gltf.lastProj = proj;
+         gltf.isFirstFrame = false;
+     }
+
+     gltf.frameData = {
+     .model = model,
+     .view = view,
+     .proj = jitteredProj,
+     .cameraPos = camPos,
+     .prevModel = gltf.lastModel,
+     .prevView = gltf.lastView,
+     .prevProj = gltf.lastProj,
+     .renderResolution = glm::vec2(renderWidth, renderHeight),
+     .jitterOffset = gltf.jitterOffset,
+     .prevJitterOffset = gltf.prevJitterOffset
+     };
+
+     upload_buffer_data(vkDev, gltf.perFrameBuffer.memory, 0, &gltf.frameData, sizeof(GLTFFrameData));
+     updateLights(gltf);
+     upload_buffer_data(vkDev, gltf.matBuffer.memory, 0, &gltf.matPerFrame, sizeof(gltf.matPerFrame));
+
+     VkImage colorTargetImage;
+     VkImageView colorTargetView;
+     VkImageView depthView;
+     VkImageView motionVectorView;
+     VkFormat colorFormat;
+     VkFormat depthFormat;
+
+     VkImage swapchainImg = vkDev.swapchainImages[imageIndex];
+     VkImageView swapchainView = vkDev.swapchainImageViews[imageIndex];
+
+     bool screenCopy = GLTFContext_isScreenCopyRequired(&gltf);
+
+     if (useDLSS) {
+         colorTargetImage = gltf.dlssColorInput.image.image;
+         colorTargetView = gltf.dlssColorInput.image.imageView;
+         depthView = gltf.dlssDepthBuffer.image.imageView;
+         motionVectorView = gltf.dlssMotionVectors.image.imageView;
+         colorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+         depthFormat = gltf.dlssDepthBuffer.format;
+     }
+     else {
+         colorTargetImage = screenCopy ? gltf.offscreenTex.image.image : swapchainImg;
+         colorTargetView = screenCopy ? gltf.offscreenFbView : swapchainView;
+         depthView = gltf.app->depthTexture.image.imageView;
+         motionVectorView = gltf.motionVectorTex.image.imageView;
+         colorFormat = VK_FORMAT_B8G8R8A8_UNORM;
+         depthFormat = gltf.app->depthTexture.format;
+     }
+
+     VulkanTexture& offscreen = gltf.offscreenTex;
+     uint32_t offscreenIdx = get_texture_index(gltf, offscreen);
+
+     struct PushConstants {
+         uint64_t draw, materials, environments, lights, transforms, matrices, prevMatrices;
+         uint32_t envId, transmissionFramebuffer, transmissionFramebufferSampler, lightsCount;
+     };
+
+     PushConstants pc = {
+      get_buffer_address(vkDev.device, gltf.perFrameBuffer.buffer),
+      get_buffer_address(vkDev.device, gltf.matBuffer.buffer),
+      get_buffer_address(vkDev.device, gltf.envBuffer.buffer),
+      get_buffer_address(vkDev.device, gltf.lightsBuffer.buffer),
+      get_buffer_address(vkDev.device, gltf.transformBuffer.buffer),
+      get_buffer_address(vkDev.device, gltf.matricesBuffer.buffer),
+      get_buffer_address(vkDev.device, gltf.prevMatricesBuffer.buffer),
+      0, offscreenIdx, 0, (uint32_t)gltf.lights.size()
+     };
+
+     //transition to attachment optimal
+     VkImageLayout colorInitialLayout = useDLSS
+         ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+         : (screenCopy ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED);
+
+     transition_image_layout_cmd(cmd, colorTargetImage, colorFormat,
+         colorInitialLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+
+     if (useDLSS) {
+         transition_image_layout_cmd(cmd, gltf.dlssDepthBuffer.image.image, depthFormat,
+             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1, 1);
+         transition_image_layout_cmd(cmd, gltf.dlssMotionVectors.image.image, VK_FORMAT_R16G16_SFLOAT,
+             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+     }
+     else {
+         transition_image_layout_cmd(cmd, gltf.app->depthTexture.image.image, depthFormat,
+             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+         transition_image_layout_cmd(cmd, gltf.motionVectorTex.image.image, VK_FORMAT_R16G16_SFLOAT,
+             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+     }
+
+
+     VkClearColorValue clearColor = gltf.renderSkyboxBackground
+         ? VkClearColorValue{ {0.0f, 0.0f, 0.0f, 1.0f} }
+     : VkClearColorValue{ {gltf.averageEnvColor.r, gltf.averageEnvColor.g, gltf.averageEnvColor.b, 1.0f} };
+
+
+     //MRT
+     VkRenderingAttachmentInfoKHR colorAttachments[2] = {};
+
+     colorAttachments[0] = {
+         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+         .imageView = colorTargetView,
+         .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         .resolveMode = VK_RESOLVE_MODE_NONE,
+         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+         .clearValue = {.color = clearColor}
+     };
+
+     colorAttachments[1] = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+        .imageView = motionVectorView,
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .resolveMode = VK_RESOLVE_MODE_NONE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue = {.color = {0.0f, 0.0f, 0.0f, 0.0f}}
+     };
+
+     VkRenderingAttachmentInfoKHR depthInfo = {
+         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+         .imageView = depthView,
+         .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+         .resolveMode = VK_RESOLVE_MODE_NONE,
+         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+         .clearValue = {.depthStencil = {1.0f, 0}}
+     };
+
+     VkRenderingInfoKHR renderingInfo = {
+         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
+         .renderArea = {{0, 0}, {renderWidth, renderHeight}},
+         .layerCount = 1,
+         .colorAttachmentCount = 2,
+         .pColorAttachments = colorAttachments,
+         .pDepthAttachment = &depthInfo
+     };
+
+    //pass 1 opaque
+     if (vkCmdBeginRenderingKHR)
+         vkCmdBeginRenderingKHR(cmd, &renderingInfo);
+     else
+         vkCmdBeginRendering(cmd, (const VkRenderingInfo*)&renderingInfo);
+
+     VkViewport viewport = {
+         0, (float)renderHeight,
+         (float)renderWidth, -(float)renderHeight,
+         0, 1
+     };
+     VkRect2D scissor = { {0, 0}, {renderWidth, renderHeight} };
+     vkCmdSetViewport(cmd, 0, 1, &viewport);
+     vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+     VkDescriptorSet sets[] = { gltf.bindlessSet0, gltf.dummySet1, gltf.bindlessSet2, gltf.dummySet3 };
+     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gltf.pipelineLayout, 0, 4, sets, 0, nullptr);
+
+     //skybox
+     if (gltf.renderSkyboxBackground) {
+         renderEnvironmentCubemap(gltf, cmd, jitteredProj, view);
+         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gltf.pipelineLayout, 0, 4, sets, 0, nullptr);
+     }
+
+     VkDeviceSize offset = 0;
+     vkCmdBindVertexBuffers(cmd, 0, 1, &gltf.vertexBuffer.buffer, &offset);
+     vkCmdBindIndexBuffer(cmd, gltf.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+     pc.transmissionFramebuffer = 0;
+     pc.transmissionFramebufferSampler = 0;
+     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gltf.pipelineSolid_Pass1);
+     vkCmdPushConstants(cmd, gltf.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+         0, sizeof(PushConstants), &pc);
+
+     //blit opaque
+     for (auto id : gltf.opaqueNodes) {
+         const auto& m = gltf.meshesStorage[gltf.transforms[id].meshRef];
+         vkCmdDrawIndexed(cmd, m.indexCount, 1, m.indexOffset, m.vertexOffset, id);
+     }
+
+     if (vkCmdEndRenderingKHR)
+         vkCmdEndRenderingKHR(cmd);
+     else
+         vkCmdEndRendering(cmd);
+
+     //pass 2 transmission/transparent
+
+     if (!gltf.transmissionNodes.empty() || !gltf.transparentNodes.empty()) {
+
+         if (screenCopy) {
+             uint32_t mips = static_cast<uint32_t>(
+                 std::floor(std::log2(std::max(offscreen.width, offscreen.height)))) + 1;
+
+             if (useDLSS) {
+                 // copy from DLSS color input to offscreen for transmission
+                 transition_image_layout_cmd(cmd, colorTargetImage, colorFormat,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 1, 1);
+
+                 transition_image_layout_cmd(cmd, offscreen.image.image, VK_FORMAT_B8G8R8A8_UNORM,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, 1);
+
+                 VkImageBlit blit = {
+                     .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                     .srcOffsets = {{0, 0, 0}, {(int32_t)renderWidth, (int32_t)renderHeight, 1}},
+                     .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                     .dstOffsets = {{0, 0, 0}, {(int32_t)offscreen.width, (int32_t)offscreen.height, 1}}
+                 };
+                 vkCmdBlitImage(cmd, colorTargetImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     offscreen.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     1, &blit, VK_FILTER_LINEAR);
+
+                 // transition DLSS color back to attachment
+                 transition_image_layout_cmd(cmd, colorTargetImage, colorFormat,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+
+                 // mipmaps for transmission sampling
+                 generate_mipmaps(vkDev.physicalDevice, cmd, offscreen.image.image, VK_FORMAT_B8G8R8A8_UNORM,
+                     offscreen.width, offscreen.height, mips,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+             }
+             else {
+                 
+                 transition_image_layout_cmd(cmd, offscreen.image.image, VK_FORMAT_B8G8R8A8_UNORM,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 1, 1);
+
+                 transition_image_layout_cmd(cmd, swapchainImg, VK_FORMAT_B8G8R8A8_UNORM,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, 1);
+
+                 VkImageBlit blit = {
+                     .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                     .srcOffsets = {{0, 0, 0}, {(int32_t)outputWidth, (int32_t)outputHeight, 1}},
+                     .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                     .dstOffsets = {{0, 0, 0}, {(int32_t)outputWidth, (int32_t)outputHeight, 1}}
+                 };
+                 vkCmdBlitImage(cmd, offscreen.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     swapchainImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     1, &blit, VK_FILTER_NEAREST);
+
+                 
+                 transition_image_layout_cmd(cmd, swapchainImg, VK_FORMAT_B8G8R8A8_UNORM,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+
+                 // mipmaps for transmission sampling
+                 generate_mipmaps(vkDev.physicalDevice, cmd, offscreen.image.image, VK_FORMAT_B8G8R8A8_UNORM,
+                     outputWidth, outputHeight, mips,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+             }
+
+             
+             update_descriptor_slot(vkDev, gltf.bindlessSet0, 3, offscreenIdx,
+                 offscreen.image.imageView, VK_NULL_HANDLE);
+
+             pc.transmissionFramebuffer = offscreenIdx;
+             pc.transmissionFramebufferSampler = 0;
+         }
+
+         
+         if (!useDLSS && screenCopy) {
+             colorAttachments[0].imageView = swapchainView;
+         }
+
+         
+         colorAttachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+         colorAttachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+         depthInfo.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+
+         if (vkCmdBeginRenderingKHR)
+             vkCmdBeginRenderingKHR(cmd, &renderingInfo);
+         else
+             vkCmdBeginRendering(cmd, (const VkRenderingInfo*)&renderingInfo);
+
+         vkCmdSetViewport(cmd, 0, 1, &viewport);
+         vkCmdSetScissor(cmd, 0, 1, &scissor);
+         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gltf.pipelineLayout, 0, 4, sets, 0, nullptr);
+         vkCmdBindVertexBuffers(cmd, 0, 1, &gltf.vertexBuffer.buffer, &offset);
+         vkCmdBindIndexBuffer(cmd, gltf.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+         vkCmdPushConstants(cmd, gltf.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+             0, sizeof(PushConstants), &pc);
+
+         // blit transmission
+         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gltf.pipelineSolid_Pass2);
+         for (auto id : gltf.transmissionNodes) {
+             const auto& m = gltf.meshesStorage[gltf.transforms[id].meshRef];
+             vkCmdDrawIndexed(cmd, m.indexCount, 1, m.indexOffset, m.vertexOffset, id);
+         }
+
+         //blit transparent
+         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gltf.pipelineTransparent_Pass2);
+         for (auto id : gltf.transparentNodes) {
+             const auto& m = gltf.meshesStorage[gltf.transforms[id].meshRef];
+             vkCmdDrawIndexed(cmd, m.indexCount, 1, m.indexOffset, m.vertexOffset, id);
+         }
+
+         if (vkCmdEndRenderingKHR)
+             vkCmdEndRenderingKHR(cmd);
+         else
+             vkCmdEndRendering(cmd);
+     }
+
+     if (useDLSS) {
+         transition_image_layout_cmd(cmd, colorTargetImage, colorFormat,
+             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
+         transition_image_layout_cmd(cmd, gltf.dlssDepthBuffer.image.image, depthFormat,
+             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
+         transition_image_layout_cmd(cmd, gltf.dlssMotionVectors.image.image, VK_FORMAT_R16G16_SFLOAT,
+             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
+     }
+     else {
+         
+         transition_image_layout_cmd(cmd, gltf.motionVectorTex.image.image, VK_FORMAT_R16G16_SFLOAT,
+             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
+
+         
+         ImGui_ImplVulkan_NewFrame();
+         ImGui_ImplGlfw_NewFrame();
+         ImGui::NewFrame();
+
+         if (gltf.inspector && gltf.app->cfg.showGLTFInspector) {
+             draw_GTF_inspector_app(gltf.app, *gltf.inspector);
+         }
+         draw_fps(gltf.app);
+         drawSelector(&gltf);
+         drawGizmo(gltf);
+         drawDLSSToggle(gltf.app, gltf);
+         ImGui::Render();
+
+         VkRenderingAttachmentInfo imguiColorAttachment = {
+             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+             .imageView = swapchainView,
+             .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+             .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+         };
+
+         VkRenderingInfo imguiRenderingInfo = {
+             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+             .renderArea = {{0, 0}, {outputWidth, outputHeight}},
+             .layerCount = 1,
+             .colorAttachmentCount = 1,
+             .pColorAttachments = &imguiColorAttachment,
+         };
+
+         if (vkCmdBeginRenderingKHR)
+             vkCmdBeginRenderingKHR(cmd, &imguiRenderingInfo);
+         else
+             vkCmdBeginRendering(cmd, &imguiRenderingInfo);
+
+         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+
+         if (vkCmdEndRenderingKHR)
+             vkCmdEndRenderingKHR(cmd);
+         else
+             vkCmdEndRendering(cmd);
+     }
+
+
+     gltf.lastModel = model;
+     gltf.lastView = view;
+     gltf.lastProj = useDLSS ? jitteredProj : proj;
+     gltf.prevJitterOffset = gltf.jitterOffset;
+
+     //next frame = current matrix
+     size_t matricesSize = gltf.matrices.size() * sizeof(glm::mat4);
+     upload_buffer_data(vkDev, gltf.prevMatricesBuffer.memory, 0, gltf.matrices.data(), matricesSize);
+
+
+ }
 
 
 void prefilter_cubemap(GLTFContext* gltf, ktxTexture1* cube, const char* outputPath, VulkanTexture& srcEnvMap, uint32_t srcEnvMapBindlessIdx, Distribution distribution, uint32_t sampleCount)
@@ -767,7 +1306,7 @@ void GLTFContext_init(GLTFContext* context, App* app)
     context->app = app;
     context->glTFDataholder.gltfContext = context;
     VulkanRenderDevice& vkDev = app->vkDev;
-
+    context->isFirstFrame = true;
     GLTFGlobalSamplers_init(&context->samplers, vkDev);
 
     //desc pool & layouts
@@ -791,7 +1330,7 @@ void GLTFContext_init(GLTFContext* context, App* app)
         };
         VK_CHECK(vkCreateDescriptorPool(vkDev.device, &poolInfo, nullptr, &context->bindlessPool));
 
-        // set 0: samplers, YUV(placeholder), Textures
+        // set 0: samplers, YUV(placeholder), tex
         VkDescriptorBindingFlags bindlessFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
         VkDescriptorSetLayoutBinding bindings0[] = {
             { 0, VK_DESCRIPTOR_TYPE_SAMPLER, maxSamplers, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr },
@@ -810,7 +1349,7 @@ void GLTFContext_init(GLTFContext* context, App* app)
         };
         VK_CHECK(vkCreateDescriptorSetLayout(vkDev.device, &layoutInfo0, nullptr, &context->setLayout0));
 
-        // set 1 : dummy (placeholder for 3D)
+        // set 1 : dummy (placeholder)
         VkDescriptorSetLayoutBinding binding1 = { 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT };
         VkDescriptorSetLayoutCreateInfo layoutInfo1 = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &binding1 };
         VK_CHECK(vkCreateDescriptorSetLayout(vkDev.device, &layoutInfo1, nullptr, &context->setLayout1));
@@ -836,7 +1375,7 @@ void GLTFContext_init(GLTFContext* context, App* app)
         std::array<VkDescriptorSetLayout, 4> setLayouts = { context->setLayout0, context->setLayout1, context->setLayout2, context->setLayout3 };
         struct PushConstants {
             uint64_t draw; uint64_t materials; uint64_t environments; uint64_t lights;
-            uint64_t transforms; uint64_t matrices; uint32_t envId;
+            uint64_t transforms; uint64_t matrices; uint64_t prevMatrices; uint32_t envId;
             uint32_t transmissionFramebuffer; uint32_t transmissionFramebufferSampler; uint32_t lightsCount;
         };
         VkPushConstantRange pcRange = { VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants) };
@@ -908,8 +1447,32 @@ void GLTFContext_init(GLTFContext* context, App* app)
         context->textureIndexMap[context->dummyWhite.image.imageView] = 1;
         context->nextTextureIndex = 2;
     }
+    //motion vector images
+    {
+        create_image(vkDev.device, vkDev.physicalDevice, vkDev.framebufferWidth, vkDev.framebufferHeight,
+            VK_FORMAT_R16G16_SFLOAT, // High precision needed for DLSS
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            context->motionVectorTex.image.image,
+            context->motionVectorTex.image.imageMemory);
+            
+        
+        create_image_view(vkDev.device, context->motionVectorTex.image.image,
+            VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT,
+            &context->motionVectorTex.image.imageView);
+        transition_image_layout(vkDev, context->motionVectorTex.image.image,
+            VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-    EnvironmentMapTextures_init(context);
+        context->motionVectorTex.format = VK_FORMAT_R16G16_SFLOAT;  
+        context->motionVectorTex.width = vkDev.framebufferWidth;    
+        context->motionVectorTex.height = vkDev.framebufferHeight;  
+
+    }
+
+    //TODO: FIX THIS, THIS IS NOT A GOOD IDEA, I NEED TO COMMENT THIS OUT EVERY TIME IM GENERATING A NEW ENV MAP
+   EnvironmentMapTextures_init(context);
     context->canvas3d = new LineCanvas3D();
     init_line_canvas3D(context->canvas3d);
 
@@ -923,7 +1486,7 @@ void GLTFContext_init(GLTFContext* context, App* app)
 void GLTFContext_destroy(GLTFContext* context)
 {
     VkDevice device = context->app->vkDev.device;
-    
+    destroyDLSSRenderTargets(*context);
     GLTFGlobalSamplers_destroy(&context->samplers, device);
     EnvironmentMapTextures_destroy(&context->envMapTextures, device);
     destroy_line_canvas3D(context->canvas3d, device);
@@ -954,12 +1517,12 @@ void GLTFContext_destroy(GLTFContext* context)
     destroyBuf(context->perFrameBuffer);
     destroyBuf(context->transformBuffer);
     destroyBuf(context->matricesBuffer);
+    destroyBuf(context->prevMatricesBuffer);
 
 
-    //destroyBuf(context->morphStatesBuffer);
     destroyBuf(context->vertexBuffer);
     destroyBuf(context->vertexSkinningBuffer);
-    //destroyBuf(context->vertexMorphingBuffer);
+ 
     destroyBuf(context->indexBuffer);
     destroyBuf(context->matBuffer);
 
@@ -971,23 +1534,16 @@ void GLTFContext_destroy(GLTFContext* context)
     vkDestroyPipeline(device, context->pipelineTransparent_Pass1, nullptr);
     vkDestroyPipeline(device, context->pipelineSolid_Pass2, nullptr);
     vkDestroyPipeline(device, context->pipelineTransparent_Pass2, nullptr);
-    //vkDestroyPipelineLayout(device, context->pipelineLayoutTransparent, nullptr);
-    //vkDestroyPipeline(device, context->pipelineComputeAnimations, nullptr);
-    //vkDestroyPipelineLayout(device, context->pipelineLayoutComputeAnimations, nullptr);
 
     vkDestroyShaderModule(device, context->vert.shaderModule, nullptr);
     vkDestroyShaderModule(device, context->frag.shaderModule, nullptr);
-    //vkDestroyShaderModule(device, context->animation.shaderModule, nullptr);
 
- /*   for (int i = 0; i < 3; i++) {
-        destroy_vulkan_image(device, context->offscreenTex[i].image);
-        vkDestroyFramebuffer(device, context->offscreenFb[i], nullptr);
-    }*/
+
+
 
     destroy_vulkan_image(device, context->offscreenTex.image);
     vkDestroyImageView(device, context->offscreenFbView, nullptr);
-   // vkDestroyRenderPass(device, context->offscreenRenderPass, nullptr);
-   // vkDestroyRenderPass(device, context->transparentRenderPass, nullptr); 
+
 
     for (auto& matTextures : context->glTFDataholder.textures) {
         destroy_vulkan_image(device, matTextures.baseColorTexture.image);
@@ -1277,15 +1833,13 @@ GLTFMaterialDataGPU setupglTFMaterialData(
 
     // transmission
     {
-        printf("\n=== MATERIAL %s TRANSMISSION DEBUG ===\n", mtlDescriptor->GetName().C_Str());
 
         bool useTransmission = mat.transmissionTexture.image.image;
-        printf("Has transmission texture: %s\n", useTransmission ? "YES" : "NO");
+
 
         ai_real transmissionFactor = 0.0f;
         aiReturn result = mtlDescriptor->Get(AI_MATKEY_TRANSMISSION_FACTOR, transmissionFactor);
-        printf("AI_MATKEY_TRANSMISSION_FACTOR result: %d (SUCCESS=%d), value=%f\n",
-            result, AI_SUCCESS, transmissionFactor);
+
 
 
         if (mtlDescriptor->Get(AI_MATKEY_TRANSMISSION_FACTOR, transmissionFactor) == AI_SUCCESS) {
@@ -1607,17 +2161,40 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
     const std::vector<VkDynamicState> dyns = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
     const VkPipelineDynamicStateCreateInfo dyn = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0, (uint32_t)dyns.size(), dyns.data() };
 
-    VkFormat colorFormat = VK_FORMAT_B8G8R8A8_UNORM; 
+   // VkFormat colorFormat = VK_FORMAT_B8G8R8A8_UNORM; 
+    VkFormat colorFormats[] =
+    {
+        VK_FORMAT_B8G8R8A8_UNORM,
+        VK_FORMAT_R16G16_SFLOAT,
+    };
     VkFormat depthFormat = find_depth_format(vkDev.physicalDevice);
 
-    const VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, nullptr, 0, 1, &colorFormat, depthFormat, has_stencil_component(depthFormat) ? depthFormat : VK_FORMAT_UNDEFINED };
+    //const VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, nullptr, 0, 1, &colorFormat, depthFormat, has_stencil_component(depthFormat) ? depthFormat : VK_FORMAT_UNDEFINED };
+    const VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, nullptr, 0, 2, colorFormats, depthFormat, has_stencil_component(depthFormat) ? depthFormat : VK_FORMAT_UNDEFINED };
 
 
     // pipeline solid
     VkPipelineRasterizationStateCreateInfo rs = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, nullptr, 0, VK_FALSE, VK_FALSE, VK_POLYGON_MODE_FILL, gltf.doublesided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE, VK_FALSE, 0, 0, 0, 1.0f };
-    VkPipelineColorBlendAttachmentState att = { VK_FALSE, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD, 0xf };
-    VkPipelineColorBlendStateCreateInfo cb = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 1, &att };
+    //VkPipelineColorBlendAttachmentState att = { VK_FALSE, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD, 0xf };
+    
+    VkPipelineColorBlendAttachmentState solidAttachments[2] = {};
+    solidAttachments[0].blendEnable = VK_FALSE;
+    solidAttachments[0].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    solidAttachments[0].dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    solidAttachments[0].colorBlendOp = VK_BLEND_OP_ADD;
+    solidAttachments[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    solidAttachments[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    solidAttachments[0].alphaBlendOp = VK_BLEND_OP_ADD;
+    solidAttachments[0].colorWriteMask = 0xF;
+    //motion vectors
+    solidAttachments[1].blendEnable = VK_FALSE;
+    solidAttachments[1].colorWriteMask = 0xF;
+    solidAttachments[1].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    solidAttachments[1].dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
 
+   // VkPipelineColorBlendStateCreateInfo cb = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 1, &att };
+    //updated for motion vectors
+    VkPipelineColorBlendStateCreateInfo cb = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 2, solidAttachments };
     VkGraphicsPipelineCreateInfo pi = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &renderingInfo, 0, (uint32_t)stages.size(), stages.data(), &vi, &ia, nullptr, &vp, &rs, &ms, &ds, &cb, &dyn, gltf.pipelineLayout, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, -1 };
     VK_CHECK(vkCreateGraphicsPipelines(vkDev.device, VK_NULL_HANDLE, 1, &pi, nullptr, &gltf.pipelineSolid_Pass1));
     VK_CHECK(vkCreateGraphicsPipelines(vkDev.device, VK_NULL_HANDLE, 1, &pi, nullptr, &gltf.pipelineSolid_Pass2)); // Reuse for pass 2
@@ -1628,20 +2205,40 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
 
     rs.cullMode = VK_CULL_MODE_BACK_BIT;
     //alpha blend for pass 1
-    VkPipelineColorBlendAttachmentState attTransparent1 = {
-        VK_TRUE,
-        VK_BLEND_FACTOR_SRC_ALPHA,           
-        VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, 
-        VK_BLEND_OP_ADD,                     
-        VK_BLEND_FACTOR_ONE,                 
-        VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, 
-        VK_BLEND_OP_ADD,                     
-        0xf
-    };
+    //VkPipelineColorBlendAttachmentState attTransparent1 = {
+    //    VK_TRUE,
+    //    VK_BLEND_FACTOR_SRC_ALPHA,           
+    //    VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, 
+    //    VK_BLEND_OP_ADD,                     
+    //    VK_BLEND_FACTOR_ONE,                 
+    //    VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, 
+    //    VK_BLEND_OP_ADD,                     
+    //    0xf
+    //};
 
-    VkPipelineColorBlendStateCreateInfo cbTransparent1 = {
+    VkPipelineColorBlendAttachmentState transAttachments[2] = {};
+    transAttachments[0].blendEnable = VK_TRUE;
+    transAttachments[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    transAttachments[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    transAttachments[0].colorBlendOp = VK_BLEND_OP_ADD;
+    transAttachments[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    transAttachments[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    transAttachments[0].alphaBlendOp = VK_BLEND_OP_ADD;
+    transAttachments[0].colorWriteMask = 0xF;
+    //motion vectors
+    transAttachments[1].blendEnable = VK_FALSE;
+    transAttachments[1].colorWriteMask = 0;
+
+    
+    
+    /*VkPipelineColorBlendStateCreateInfo cbTransparent1 = {
         VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 1, &attTransparent1
+    };*/
+
+    VkPipelineColorBlendStateCreateInfo cbTransparent1 = {
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+      nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 2, transAttachments
     };
 
     VkGraphicsPipelineCreateInfo piTrans1 = pi;
@@ -1651,7 +2248,7 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
 
     VK_CHECK(vkCreateGraphicsPipelines(vkDev.device, VK_NULL_HANDLE, 1, &piTrans1, nullptr, &gltf.pipelineTransparent_Pass1));
 
-    // trans pipeline for Pass 2 , exact blend mode
+
     VkPipelineColorBlendAttachmentState attTransparent2 = {
         VK_TRUE,
         VK_BLEND_FACTOR_SRC_ALPHA,           
@@ -1665,7 +2262,7 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
 
     VkPipelineColorBlendStateCreateInfo cbTransparent2 = {
         VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-        nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 1, &attTransparent2
+        nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 1, &attTransparent2,
     };
 
     VkGraphicsPipelineCreateInfo piTrans2 = pi;
@@ -1674,7 +2271,7 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
     piTrans2.pRasterizationState = &rs;
 
     VK_CHECK(vkCreateGraphicsPipelines(vkDev.device, VK_NULL_HANDLE, 1, &piTrans2, nullptr, &gltf.pipelineTransparent_Pass2));
-    // Cameras
+    // cameras
     gltf.cameras.clear();
     for (uint32_t i = 0; i < scene->mNumCameras; ++i) {
         auto* c = scene->mCameras[i];
@@ -1727,16 +2324,23 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
       VK_FALSE, 0, 0, 0, 1.0f
         };
 
-        VkPipelineColorBlendAttachmentState skyboxAtt = {
+        VkPipelineColorBlendAttachmentState skyboxAtts[2] = {};
+        skyboxAtts[0] = {
       VK_FALSE,
       VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD,
       VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD,
       0xf
         };
-
+        //motion vector
+        skyboxAtts[1] = {
+    VK_FALSE,
+    VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD,
+    VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD,
+    0xF
+        };
         VkPipelineColorBlendStateCreateInfo skyboxCb = {
       VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-      nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 1, &skyboxAtt
+      nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 2, skyboxAtts
         };
 
 
@@ -1788,13 +2392,12 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
         VK_CHECK(vkCreateGraphicsPipelines(vkDev.device, VK_NULL_HANDLE, 1, &skyboxPi, nullptr, &gltf.skyboxPipeline));
 
 
-        //load skybox TODO:: MOVE THIS SOMEWHERE ELSE, THIS IS SO SHIT HOLY FUCK WHAT IS THIS CODEPATH
+        //load skybox TODO: MOVE THIS SOMEWHERE ELSE, THIS IS SO SHIT HOLY FUCK WHAT IS THIS CODEPATH
+        // NOTE THAT THIS IS PROBABLY VERY APPRORIATE, COMPARING IT TO THE PREVIOUS NOTE I MADE IN THE CONTEXT_INIT
         gltf.envMapTextures.envMapSkybox = load_texture(vkDev,"D:/codes/more codes/c++/PBR/data/kiara_1_dawn_8k.hdr", VK_IMAGE_VIEW_TYPE_CUBE, true);
         if (gltf.envMapTextures.envMapSkybox.image.image == nullptr) { assert(0); exit(255); }
 
 
-        printf("Skybox HDR loaded: %ux%u (should be ~256x256 per face for 1k HDR)\n",
-            gltf.envMapTextures.envMapSkybox.width, gltf.envMapTextures.envMapSkybox.height);
         get_cubemap_index(gltf, gltf.envMapTextures.envMapSkybox);
 
 
@@ -1820,9 +2423,7 @@ void renderEnvironmentCubemap(GLTFContext& gltf, VkCommandBuffer buf, const glm:
     };
 
     uint32_t skyboxIdx = get_cubemap_index(gltf, gltf.envMapTextures.envMapSkybox);
-   //debug
-    // printf("Rendering skybox with cubemap index: %u\n", skyboxIdx);
-
+   
     VkDescriptorSet sets[] = { gltf.bindlessSet0, gltf.dummySet1, gltf.bindlessSet2, gltf.dummySet3 };
     vkCmdBindDescriptorSets(buf, VK_PIPELINE_BIND_POINT_GRAPHICS, gltf.skyboxPipelineLayout, 0, 4, sets, 0, nullptr);
 
@@ -1837,8 +2438,6 @@ void renderGLTF(
     GLTFContext& gltf,
     uint32_t currentSwapchainImageIndex,
     VkCommandBuffer buf,
-    VkRenderPass, //TODO: moved to dynamic rendering, remove this
-    VkFramebuffer, //TODO : and this
     uint32_t swapchainWidth,
     uint32_t swapchainHeight,
     const glm::mat4& model,
@@ -1868,9 +2467,24 @@ void renderGLTF(
         }
     }
 
+    if (gltf.isFirstFrame)
+    {
+        gltf.lastModel = model;
+        gltf.lastView= view;
+        gltf.lastProj= proj;
+}
 
-
-    gltf.frameData = { .model = model, .view = view, .proj = proj, .cameraPos = camPos };
+    gltf.frameData = { 
+        .model = model, 
+        .view = view, 
+        .proj = proj, 
+        .cameraPos = camPos,
+        //motion vectors
+        .prevModel = gltf.lastModel,
+        .prevView = gltf.lastView,
+        .prevProj = gltf.lastProj,
+        .renderResolution = glm::vec2(swapchainWidth, swapchainHeight)
+    };
     upload_buffer_data(vkDev, gltf.perFrameBuffer.memory, 0, &gltf.frameData, sizeof(GLTFFrameData));
     updateLights(gltf);
     upload_buffer_data(vkDev, gltf.matBuffer.memory, 0, &gltf.matPerFrame, sizeof(gltf.matPerFrame));
@@ -1880,15 +2494,17 @@ void renderGLTF(
 
     uint32_t currentOffscreenIdx = 0;
     VulkanTexture& offscreen = gltf.offscreenTex;
-    uint32_t offscreenIdx = get_texture_index(gltf, offscreen); // Get bindless index
-    //printf("Using offscreen texture %u, bindless index %u\n", currentOffscreenIdx, offscreenIdx);
+    uint32_t offscreenIdx = get_texture_index(gltf, offscreen); 
 
     
-    struct PushConstants { uint64_t draw, materials, environments, lights, transforms, matrices; uint32_t envId, transmissionFramebuffer, transmissionFramebufferSampler, lightsCount; };
+    struct PushConstants { 
+        uint64_t draw, materials, environments, lights, transforms, matrices, prevMatrices; 
+        uint32_t envId, transmissionFramebuffer, transmissionFramebufferSampler, lightsCount; };
     PushConstants pc = {
         get_buffer_address(vkDev.device, gltf.perFrameBuffer.buffer), get_buffer_address(vkDev.device, gltf.matBuffer.buffer),
         get_buffer_address(vkDev.device, gltf.envBuffer.buffer), get_buffer_address(vkDev.device, gltf.lightsBuffer.buffer),
         get_buffer_address(vkDev.device, gltf.transformBuffer.buffer), get_buffer_address(vkDev.device, gltf.matricesBuffer.buffer),
+        get_buffer_address(vkDev.device, gltf.prevMatricesBuffer.buffer),
         0, offscreenIdx, 0, (uint32_t)gltf.lights.size()
     };
 
@@ -1908,9 +2524,12 @@ void renderGLTF(
     VkImage targetImage = screenCopy ? offscreen.image.image : swapchainImg;
     VkImageLayout targetInitialLayout = screenCopy ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
 
-    
+    //main color
     transition_image_layout_cmd(buf, targetImage, VK_FORMAT_B8G8R8A8_UNORM, targetInitialLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+    //depth
     transition_image_layout_cmd(buf, gltf.app->depthTexture.image.image, gltf.app->depthTexture.format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    //motion vector
+    transition_image_layout_cmd(buf, gltf.motionVectorTex.image.image, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
     VkClearColorValue clearColor;
     if (gltf.renderSkyboxBackground) {
         clearColor = { {0.0f, 0.0f, 0.0f, 1.0f} };  
@@ -1918,9 +2537,34 @@ void renderGLTF(
     else {
         clearColor = { {gltf.averageEnvColor.r, gltf.averageEnvColor.g, gltf.averageEnvColor.b, 1.0f} };
     }
-    VkRenderingAttachmentInfoKHR colorInfo = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR, nullptr, targetView, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_RESOLVE_MODE_NONE, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {.color = clearColor} };
+
+
+    //MRT
+    VkRenderingAttachmentInfoKHR colorAttachments[2];
+    // main color
+    colorAttachments[0] = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+        .imageView = targetView,
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .resolveMode = VK_RESOLVE_MODE_NONE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue = {.color = clearColor}
+    };
+    // motion vector
+    colorAttachments[1] = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+        .imageView = gltf.motionVectorTex.image.imageView,
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .resolveMode = VK_RESOLVE_MODE_NONE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, 
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue = {.color = {0.0f, 0.0f, 0.0f, 0.0f}}
+    };
+    //VkRenderingAttachmentInfoKHR colorInfo = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR, nullptr, targetView, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_RESOLVE_MODE_NONE, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {.color = clearColor} };
     VkRenderingAttachmentInfoKHR depthInfo = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR, nullptr, depthView, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_RESOLVE_MODE_NONE, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {.depthStencil = {1.f,0}} };
-    VkRenderingInfoKHR renderingInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR, nullptr, 0, {{0,0},{swapchainWidth, swapchainHeight}}, 1, 0, 1, &colorInfo, &depthInfo, nullptr };
+    //VkRenderingInfoKHR renderingInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR, nullptr, 0, {{0,0},{swapchainWidth, swapchainHeight}}, 1, 0, 1, &colorInfo, &depthInfo, nullptr };
+    VkRenderingInfoKHR renderingInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR, nullptr, 0, {{0,0},{swapchainWidth, swapchainHeight}}, 1, 0, 2, colorAttachments, &depthInfo, nullptr };
 
     if (vkCmdBeginRenderingKHR) vkCmdBeginRenderingKHR(buf, &renderingInfo); else vkCmdBeginRendering(buf, (const VkRenderingInfo*)&renderingInfo);
 
@@ -1999,14 +2643,14 @@ void renderGLTF(
                 swapchainImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 1, &blit, VK_FILTER_NEAREST);
 
-            // === Step D: Prepare Swapchain for Rendering ===
-            // Swapchain goes TRANSFER_DST -> COLOR_ATTACHMENT
+          
+            // swapchain TRANSFER_DST -> COLOR_ATTACHMENT
             transition_image_layout_cmd(buf, swapchainImg, VK_FORMAT_B8G8R8A8_UNORM,
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
 
-            // === Step E: Generate Mips for Offscreen ===
-            // Offscreen Mip 0 is currently in TRANSFER_SRC_OPTIMAL (from Step A).
-            // We pass TRANSFER_SRC_OPTIMAL to generate_mipmaps so it knows the starting state.
+           
+            
+            
             generate_mipmaps(vkDev.physicalDevice, buf, offscreen.image.image, VK_FORMAT_B8G8R8A8_UNORM,
                 swapchainWidth, swapchainHeight, mips,
                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, // <--- Current Layout
@@ -2015,15 +2659,18 @@ void renderGLTF(
             update_descriptor_slot(gltf.app->vkDev, gltf.bindlessSet0, 3, offscreenIdx,
                 offscreen.image.imageView, VK_NULL_HANDLE);
 
-
             
             pc.transmissionFramebuffer = offscreenIdx;
             pc.transmissionFramebufferSampler = 0;
         }
 
-        // Begin Pass 2 (Load existing background)
-        colorInfo.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-        colorInfo.imageView = swapchainView; // Always target swapchain now
+
+        colorAttachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        colorAttachments[0].imageView = swapchainView;
+   
+
+        colorAttachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+
         depthInfo.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 
         if (vkCmdBeginRenderingKHR) vkCmdBeginRenderingKHR(buf, &renderingInfo); else vkCmdBeginRendering(buf, (const VkRenderingInfo*)&renderingInfo);
@@ -2042,14 +2689,14 @@ void renderGLTF(
 
         vkCmdPushConstants(buf, gltf.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pc);
 
-        // Transmission Opaque (Solid Pipeline)
+        // transmission  opaque 
         vkCmdBindPipeline(buf, VK_PIPELINE_BIND_POINT_GRAPHICS, gltf.pipelineSolid_Pass2);
         for (auto id : gltf.transmissionNodes) {
             const auto& m = gltf.meshesStorage[gltf.transforms[id].meshRef];
             vkCmdDrawIndexed(buf, m.indexCount, 1, m.indexOffset, m.vertexOffset, id);
         }
 
-        // Transparent (Blend Pipeline)
+        // transparent 
         vkCmdBindPipeline(buf, VK_PIPELINE_BIND_POINT_GRAPHICS, gltf.pipelineTransparent_Pass2);
         for (auto id : gltf.transparentNodes) {
             const auto& m = gltf.meshesStorage[gltf.transforms[id].meshRef];
@@ -2062,6 +2709,12 @@ void renderGLTF(
 
         if (vkCmdEndRenderingKHR) vkCmdEndRenderingKHR(buf); else vkCmdEndRendering(buf);
     }
+
+   
+   //transition motion vector
+    transition_image_layout_cmd(buf, gltf.motionVectorTex.image.image, VK_FORMAT_R16G16_SFLOAT,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
+
 
     //might be better if we're doing it also in the opaque when we're about to blit
     {
@@ -2081,6 +2734,7 @@ void renderGLTF(
 
         drawSelector(&gltf);
         drawGizmo(gltf);
+        drawDLSSToggle(gltf.app, gltf);
 
         ImGui::Render();
 
@@ -2115,6 +2769,18 @@ void renderGLTF(
     }
 
    // gltf.currentOffscreenTex = (gltf.currentOffscreenTex + 1) % 3;
+
+
+
+    //memcpy current matrices to previous
+    size_t matricesSize = gltf.matrices.size() * sizeof(glm::mat4);
+    upload_buffer_data(vkDev, gltf.prevMatricesBuffer.memory, 0,
+        gltf.matrices.data(), matricesSize);
+
+    gltf.lastModel = model;
+    gltf.lastView = view;
+    gltf.lastProj = proj;
+    gltf.isFirstFrame = false;
 }
 
 //MaterialType detectMaterialType(const aiMaterial* mtl) {
@@ -2186,6 +2852,7 @@ void buildTransformsList(GLTFContext& gltf)
     if (gltf.transformBuffer.memory) vkFreeMemory(device, gltf.transformBuffer.memory, nullptr);
     if (gltf.matricesBuffer.buffer) vkDestroyBuffer(device, gltf.matricesBuffer.buffer, nullptr);
     if (gltf.matricesBuffer.memory) vkFreeMemory(device, gltf.matricesBuffer.memory, nullptr);
+    if (gltf.prevMatricesBuffer.memory) vkFreeMemory(device, gltf.prevMatricesBuffer.memory, nullptr);
 
     VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -2201,6 +2868,14 @@ void buildTransformsList(GLTFContext& gltf)
     create_buffer(device, vkDev.physicalDevice, matricesSize, usage, props, gltf.matricesBuffer.buffer, gltf.matricesBuffer.memory);
     upload_buffer_data(vkDev, gltf.matricesBuffer.memory, 0, gltf.matrices.data(), matricesSize);
     gltf.matricesBuffer.size = matricesSize;
+
+    //prev matrices buffer
+    //reusing matrices buf size
+    create_buffer(vkDev.device, vkDev.physicalDevice, matricesSize, usage, props,
+        gltf.prevMatricesBuffer.buffer, gltf.prevMatricesBuffer.memory);
+    //init with current data
+    upload_buffer_data(vkDev, gltf.prevMatricesBuffer.memory, 0,
+        gltf.matrices.data(), matricesSize); 
 }
 
 void sortTransparentNodes(GLTFContext& gltf, const glm::vec3& cameraPos)
@@ -2662,7 +3337,6 @@ void drawGizmo(GLTFContext& gltf)
 
     ImGuizmo::BeginFrame();
 
-    // Get the world matrix - but also apply the model transform from renderGLTF
     glm::mat4 worldMatrix = gltf.frameData.model * gltf.matrices[node.modelMtxId];
 
     ImGuizmo::SetOrthographic(false);
@@ -2712,7 +3386,7 @@ void drawGizmo(GLTFContext& gltf)
         glm::value_ptr(worldMatrix),
         nullptr))
     {
-        // Validate
+    
         bool valid = true;
         for (int i = 0; i < 4 && valid; i++) {
             for (int j = 0; j < 4 && valid; j++) {
@@ -2723,7 +3397,7 @@ void drawGizmo(GLTFContext& gltf)
         }
 
         if (valid) {
-            // Remove the model transform to get back to local space
+
             glm::mat4 localMatrix = glm::inverse(gltf.frameData.model) * worldMatrix;
 
             gltf.matrices[node.modelMtxId] = localMatrix;
@@ -2767,4 +3441,26 @@ void drawSelector(GLTFContext* gltf)
         }
     }
     ImGui::End();
+}
+
+
+void drawDLSSToggle(App* app, GLTFContext& gltf)
+{
+    if (!dlss_is_available(&app->dlssCtx)) {
+        ImGui::TextDisabled("DLSS not available");
+        return;
+    }
+
+    if (ImGui::Checkbox("Enable DLSS", &gltf.dlssEnabled)) {
+        if (!gltf.dlssEnabled && app->dlssInitialized) {
+            dlss_release_feature(&app->dlssCtx);
+            app->dlssInitialized = false;
+        }
+        gltf.dlssNeedsReset = true;
+    }
+
+    if (gltf.dlssEnabled) {
+        ImGui::Text("Render: %ux%u", gltf.dlssRenderWidth, gltf.dlssRenderHeight);
+        ImGui::Text("Output: %ux%u", gltf.displayWidth, gltf.displayHeight);
+    }
 }

@@ -5,7 +5,7 @@
 #include <utils_gltf.h>
 #include <glfw/glfw3.h>
 #include <implot.h>
-
+#include <dlss.h>
 #include <glm/ext.hpp>
 #include <glm/glm.hpp>
 
@@ -60,6 +60,12 @@ struct AppConfig
 	glm::vec3 initialCameraPos;
 	glm::vec3 initialCameraTarget;
 	bool showGLTFInspector;
+
+	//dlss stuff
+	const char* projectId;
+	const char* engineVersion;
+	const wchar_t* appDataPath;
+
 };
 
 struct MouseState
@@ -106,6 +112,9 @@ typedef struct App
 	MouseState mouseState;
 	VkFormat swapchainFormat;
 
+	DLSSContext dlssCtx = {};
+	DLSSQualityMode dlssMode = DLSSQualityMode::Quality;
+	bool dlssInitialized = false;
 } App;
 
 
@@ -134,3 +143,8 @@ void draw_memo_app(App* app);
 void create_swapchain_framebuffers(App* app);
 void create_sync_objects(App* app);
 void recreate_swapchain(App* app);
+
+
+void init_DLSS_from_app(App* app, AppConfig* cfg);
+void create_DLSS_feature(App* app, GLTFContext* gltf, VkCommandBuffer cmd);
+

@@ -6,11 +6,13 @@
 #define VK_NO_PROTOTYPES
 #include <volk.h>
 #include <glslang/Include/glslang_c_interface.h>
-#include <glslang/Public/resource_limits_c.h>
+#include <glslang/Public/resource_limits_c.h>s
 
 #define VK_CHECK(value) CHECK(value == VK_SUCCESS, __FILE__, __LINE__);
 #define VK_CHECK_RET(value) if ( value != VK_SUCCESS ) { CHECK(false, __FILE__, __LINE__); return value; }
 #define BL_CHECK(value) CHECK(value, __FILE__, __LINE__);
+
+using  DeviceExtensionQueryCallback = std::function < std::vector<const char*>(VkInstance, VkPhysicalDevice)>;
 
 struct VulkanInstance 
 {
@@ -182,7 +184,7 @@ inline VkWriteDescriptorSet image_write_descriptor_set(VkDescriptorSet ds, const
 	};
 }
 
-void create_instance(VkInstance* instance);
+void create_instance(VkInstance* instance, VkExtensionProperties* reqExts = nullptr, uint32_t extensionCount = 0);
 
 VkResult create_device(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures deviceFeatures, uint32_t graphicsFamily, VkDevice* device);
 VkResult create_device_with_compute(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures deviceFeatures, uint32_t graphicsFamily, uint32_t computeFamily, VkDevice* device);
@@ -199,17 +201,22 @@ VkResult create_semaphore(VkDevice device, VkSemaphore* outSemaphore);
 
 bool init_vulkan_render_device(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, std::function<bool(VkPhysicalDevice)> selector, VkPhysicalDeviceFeatures deviceFeatures);
 bool init_vulkan_render_device2(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, std::function<bool(VkPhysicalDevice)> selector, VkPhysicalDeviceFeatures2 deviceFeatures2);
-bool init_vulkan_render_device3(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, const VulkanContextFeatures& ctxFeatures = VulkanContextFeatures());
+bool init_vulkan_render_device3(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, const VulkanContextFeatures& ctxFeatures = VulkanContextFeatures(),
+	DeviceExtensionQueryCallback extQueryCallback = nullptr);
 VkResult find_suitable_physical_device(VkInstance instance, std::function<bool(VkPhysicalDevice)> selector, VkPhysicalDevice* physicalDevice);
 
 uint32_t find_queue_families(VkPhysicalDevice device, VkQueueFlags desiredFlags);
 bool init_vulkan_render_device_with_compute(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, VkPhysicalDeviceFeatures deviceFeatures);
 bool init_vulkan_render_device2_with_compute(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, std::function<bool(VkPhysicalDevice)> selector, 
-	VkPhysicalDeviceFeatures2 deviceFeatures2, bool supportScreenshots);
+	VkPhysicalDeviceFeatures2 deviceFeatures2, bool supportScreenshots, 
+	DeviceExtensionQueryCallback extQueryCallback);
 
 VkResult create_device2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2 deviceFeatures2, uint32_t graphicsFamily, VkDevice* device);
 
-VkResult create_device2_with_compute(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2 deviceFeatures2, uint32_t graphicsFamily, uint32_t computeFamily, VkDevice* device);
+//VkResult create_device2_with_compute(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2 deviceFeatures2, uint32_t graphicsFamily, uint32_t computeFamily, VkDevice* device);
+VkResult create_device2_with_compute(VkInstance instance, VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2 deviceFeatures2, uint32_t graphicsFamily, uint32_t computeFamily, VkDevice* device,
+	DeviceExtensionQueryCallback extQueryCallback);
+
 bool is_device_suitable(VkPhysicalDevice device);
 
 void destroy_vulkan_render_device(VulkanRenderDevice& vkDev);

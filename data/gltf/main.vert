@@ -23,6 +23,7 @@
       layout (set = 3, binding = 0) uniform texture2D kTextures2DShadow[];
       layout (set = 3, binding = 1) uniform samplerShadow kSamplersShadow[];
 
+      
 
       vec4 textureBindless2D(uint textureid, uint samplerid, vec2 uv) {
         return texture(nonuniformEXT(sampler2D(kTextures2D[textureid], kSamplers[samplerid])), uv);
@@ -55,23 +56,43 @@ layout (location=2) out vec3 oWorldPos;
 layout (location=3) out vec4 oColor;
 layout (location=4) out flat int oBaseInstance;
 
+layout (location=5) out vec4 oCurrentClipPos;
+layout (location=6) out vec4 oPrevClipPos;
+
 #include <D:/codes/more codes/c++/PBR/data/gltf/inputs.vert>
 
 void main() {
+  oBaseInstance = gl_BaseInstance;
   mat4 model = getModel();
-  mat4 MVP = getViewProjection() * model;
-
+  mat4 currentMVP = getViewProjection() * model;
   vec3 pos = getPosition();
-  gl_Position = MVP * vec4(pos, 1.0);
+  
+  vec4 clipPos = currentMVP * vec4(pos, 1.0);
+  
+  // Apply jitter to clip position
+  vec2 jitterClip = perFrame.drawable.jitterOffset * 1.0 / perFrame.drawable.renderResolution;
+  clipPos.x += jitterClip.x * clipPos.w;
+  clipPos.y += jitterClip.y * clipPos.w;
+  
+  gl_Position = clipPos;
+  oCurrentClipPos = currentMVP * vec4(pos, 1.0);  // UN-jittered for motion vectors!
+
+  mat4 prevModel = getPrevModel(); 
+  mat4 prevView  = perFrame.drawable.prevView;
+  mat4 prevProj  = perFrame.drawable.prevProj;
+  mat4 prevMVP = prevProj * prevView * prevModel;
+  oPrevClipPos = prevMVP * vec4(pos, 1.0);
+
+
 
   oUV0UV1 = vec4(getTexCoord(0), getTexCoord(1));
   oColor = getColor();
 
+
   mat3 normalMatrix = transpose( inverse(mat3(model)) );
 
   oNormal = normalMatrix  * getNormal();
-  vec4 posClip = model * vec4(pos, 1.0);
-  oWorldPos = posClip.xyz/posClip.w;
-
-  oBaseInstance = gl_BaseInstance;
+  //vec4 posClip = model * vec4(pos, 1.0);
+  vec4 posWorld = model * vec4(pos, 1.0);
+  oWorldPos = posWorld.xyz/posWorld.w;
 }

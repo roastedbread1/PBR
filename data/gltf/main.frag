@@ -52,7 +52,13 @@ layout (location=2) in vec3 worldPos;
 layout (location=3) in vec4 color;
 layout (location=4) in flat int oBaseInstance;
 
+layout (location=5) in vec4 inCurrentClipPos;
+layout (location=6) in vec4 inPrevClipPos;
+
+
 layout (location=0) out vec4 out_FragColor;
+layout (location=1) out vec2 out_MotionVector;
+
 
 #include <D:/codes/more codes/c++/PBR/data/gltf/inputs.frag>
 #include <D:/codes/more codes/c++/PBR/data/gltf/PBR.sp>
@@ -245,18 +251,36 @@ pbrInputs.attenuation = vec4(1.0, 1.0, 1.0, 0.0);
 
 
 //tone mapping
-color = color * 0.6; // Exposure adjustment
-vec3 a = color * (color + 0.0245786) - 0.000090537;
-vec3 b = color * (0.983729 * color + 0.4329510) + 0.238081;
-color = a / b;
+//color = color * 0.6; // Exposure adjustment
+//vec3 a = color * (color + 0.0245786) - 0.000090537;
+//vec3 b = color * (0.983729 * color + 0.4329510) + 0.238081;
+//color = a / b;
 
+//gamma correction
   color = pow(color, vec3(1.0/2.2));
+  //trying to figure out if I need to disable gamma correction before dlss
+  //out_FragColor = vec4(color, 1.0); 
 
 if (mat.alphaMode == 2) {  // AlphaMode_Blend
     out_FragColor = vec4(color, Kd.a);
 } else {
     out_FragColor = vec4(color, 1.0);
 }
+
+// -------motion vector section-----
+vec2 currentNDC = inCurrentClipPos.xy / inCurrentClipPos.w;
+vec2 prevNDC    = inPrevClipPos.xy / inPrevClipPos.w;
+vec2 currentUV = currentNDC * 0.5 + 0.5;
+vec2 prevUV    = prevNDC * 0.5 + 0.5;
+vec2 renderRes = vec2(perFrame.drawable.renderResolution);
+out_MotionVector = (prevUV - currentUV) * renderRes;
+
+//debug motion vector
+//float mv = length(out_MotionVector);
+//out_FragColor = vec4(mv * 10.0, mv * 10.0, mv * 10.0, 1.0);
+//out_FragColor = vec4(vec3(length(out_MotionVector) > 0.5 ? 1.0 : 0.0), 1.0);
+//out_FragColor = vec4(clamp(out_MotionVector * 0.01 + 0.5, 0.0, 1.0), 0.0, 1.0);
+//out_FragColor = vec4(abs(out_MotionVector) * 0.1, 0.0, 1.0);
 
 //  DEBUG 
 //out_FragColor = vec4((n + vec3(1.0))*0.5, 1.0);

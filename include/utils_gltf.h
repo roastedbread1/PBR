@@ -24,6 +24,17 @@ typedef struct LineCanvas3D LineCanvas3D;
 typedef struct GLTFIntrospective GLTFIntrospective;
 struct App;
 
+enum Type
+{
+	Native,
+	DLSS
+};
+
+struct RenderMode
+{
+	Type current = Native;
+};
+
 enum Distribution : uint32_t
 {
 	Distribution_Lambertian = 0,
@@ -140,16 +151,9 @@ struct Vertex {
 	glm::vec4 color;
 	glm::vec2 uv0;
 	glm::vec2 uv1;
-	float padding[2]; //to be investigated
+	float padding[2]; 
 };
 
-//typedef struct MorphTarget
-//{
-//	uint32_t meshId;
-//	std::vector<uint32_t> offset;
-//} MorphTarget;
-
-// static_assert(sizeof(Vertex) == sizeof(uint32_t) * 16);
 
 struct GLTFMaterialTextures {
 	//metallic roughness / specular glossiness
@@ -273,7 +277,6 @@ struct GLTFMaterialDataGPU {
 	};
 } ;
 
-// static_assert(sizeof(GLTFMaterialDataGPU) % 16 == 0);
 
 struct GLTFDataHolder
 {
@@ -320,6 +323,14 @@ struct GLTFFrameData {
 	glm::mat4 view;
 	glm::mat4 proj;
 	glm::vec4 cameraPos;
+
+	glm::mat4 prevModel; 
+	glm::mat4 prevView;  
+	glm::mat4 prevProj;  
+	glm::vec2 renderResolution; 
+	glm::vec2 jitterOffset;
+	glm::vec2 prevJitterOffset;
+	glm::vec2 padding;
 };
 
 struct GLTFCamera {
@@ -339,8 +350,8 @@ struct GLTFCamera {
 struct GLTFTransforms {
 	uint32_t modelMtxId;
 	uint32_t matId;
-	GLTFNodeRef nodeRef; // for CPU only
-	GLTFMeshRef meshRef; // for CPU only
+	GLTFNodeRef nodeRef; 
+	GLTFMeshRef meshRef; 
 	uint32_t sortingType;
 };
 
@@ -354,7 +365,6 @@ struct VertexBoneData {
 	uint32_t meshId;
 };
 
-// static_assert(sizeof(VertexBoneData) == sizeof(uint32_t) * 25);
 
 struct GLTFBone {
 	uint32_t boneId;
@@ -374,9 +384,7 @@ struct GLTFContext {
 	std::vector<GLTFNode> nodesStorage;
 	std::vector<GLTFMesh> meshesStorage;
 	std::unordered_map<std::string, GLTFBone> bonesByName;
-	//std::vector<MorphTarget> morphTargets;
 	std::unordered_map<std::string, uint32_t> meshesRemap;
-	//std::vector<Animation> animations;
 	std::vector<uint32_t> opaqueNodes;
 	std::vector<uint32_t> transmissionNodes;
 	std::vector<uint32_t> transparentNodes;
@@ -385,23 +393,22 @@ struct GLTFContext {
 	
 	VkPipelineLayout pipelineLayout; 
 
-	// set 0 2D tex
+	
 	VkDescriptorSetLayout setLayout0;
 	VkDescriptorSet bindlessSet0;
 
-	// set 1 3D tex (placeholder)
+	
 	VkDescriptorSetLayout setLayout1;
 	VkDescriptorSet dummySet1;
 
-	// set 2 cube tex 
 	VkDescriptorSetLayout setLayout2;
 	VkDescriptorSet bindlessSet2;
 
-	// set 3 shadow tex (placeholder)
+
 	VkDescriptorSetLayout setLayout3;
 	VkDescriptorSet dummySet3;
 
-	VkDescriptorSetLayout setLayoutSamplers; // For kSamplers[]
+	VkDescriptorSetLayout setLayoutSamplers; 
 	VkDescriptorSet bindlessSetSamplers;
 
 	std::map<VkImageView, uint32_t> textureIndexMap;
@@ -414,15 +421,12 @@ struct GLTFContext {
 	VulkanBuffer perFrameBuffer;
 	VulkanBuffer transformBuffer;
 	VulkanBuffer matricesBuffer;
-	//VulkanBuffer morphStatesBuffer;
+	
 
 	VkPipeline pipelineSolid_Pass1;
 	VkPipeline pipelineTransparent_Pass1;
 	VkPipeline pipelineSolid_Pass2;
 	VkPipeline pipelineTransparent_Pass2;
-	//VkPipelineLayout pipelineLayoutTransparent;
-	//VkPipeline pipelineComputeAnimations;
-	//VkPipelineLayout pipelineLayoutComputeAnimations;
 
 	ShaderModule vert;
 	ShaderModule frag;
@@ -433,20 +437,14 @@ struct GLTFContext {
 	VulkanBuffer indexBuffer;
 	VulkanBuffer matBuffer;
 
-	//VulkanTexture offscreenTex[3];
-	//VkFramebuffer offscreenFb[3];
-	//VkImageView offscreenFbView[3];
-	//uint32_t currentOffscreenTex;
 
 	VulkanTexture offscreenTex;
 	VkImageView offscreenFbView;
 	VkRenderPass offscreenRenderPass;
 	VkRenderPass transparentRenderPass;
 	VulkanTexture dummyWhite;
-
 	uint32_t maxVertices;
 
-	//std::vector<MorphState> morphStates;
 	std::vector<LightDataGPU> lights;
 	std::vector<GLTFCamera> cameras;
 
@@ -476,6 +474,34 @@ struct GLTFContext {
 	//bool animated;
 	//bool skinning;
 	//bool morphing;
+
+	// motion vectors
+	VulkanTexture motionVectorTex;
+
+	// history
+	glm::mat4 lastModel = glm::mat4(1.0f);
+	glm::mat4 lastView = glm::mat4(1.0f);
+	glm::mat4 lastProj = glm::mat4(1.0f);
+	bool isFirstFrame;
+	VulkanBuffer prevMatricesBuffer;
+
+	VulkanTexture dlssColorInput;
+	VulkanTexture dlssColorOutput;
+	VulkanTexture dlssDepthBuffer;
+	VulkanTexture dlssMotionVectors;
+
+	uint32_t dlssRenderWidth = 0;
+	uint32_t dlssRenderHeight = 0;
+	uint32_t displayWidth = 0;
+	uint32_t displayHeight = 0;
+
+	uint32_t frameIndex = 0;
+	glm::vec2 jitterOffset = glm::vec2(0.0f);
+	glm::vec2 prevJitterOffset = glm::vec2(0.0f);
+
+	bool dlssEnabled = false;
+	bool dlssNeedsReset = true;
+
 };
 
 
@@ -511,17 +537,14 @@ void renderGLTF(
 	GLTFContext& gltf,
 	uint32_t currentSwapchainImageIndex,
 	VkCommandBuffer buf,
-	VkRenderPass mainRenderPass,    
-	VkFramebuffer mainFramebuffer,  
 	uint32_t swapchainWidth,
 	uint32_t swapchainHeight,
 	const glm::mat4& model,
 	const glm::mat4& view,
 	const glm::mat4& proj,
-	bool rebuildRenderList = false);
+	bool rebuildRenderList);
 
-//void animateGLTF(GLTFContext& gltf, AnimationState& anim, float dt);
-//void animateBlendingGLTF(GLTFContext& gltf, AnimationState& anim1, AnimationState& anim2, float weight, float dt);
+
 MaterialType detectMaterialType(const aiMaterial* mtl);
 
 void printPrefix(int ofs);
@@ -529,8 +552,6 @@ void printMat4(const aiMatrix4x4& m);
 
 std::vector<std::string> camerasGLTF(GLTFContext& context);
 void updateCamera(GLTFContext& gltf, const glm::mat4& model, glm::mat4& view, glm::mat4& proj, float aspectRatio);
-
-//std::vector<std::string> animationsGLTF(GLTFContext& gltf);
 
 
 void buildTransformsList(GLTFContext& gltf);
@@ -546,3 +567,21 @@ void prefilter_cubemap(GLTFContext* gltf, ktxTexture1* cube, const char* outputP
 void drawGizmo(GLTFContext& gltf);
 void drawSelector(GLTFContext* gltf);
 uint32_t get_texture_index(GLTFContext& gltf, const VulkanTexture& tex);
+
+
+void createDLSSRenderTargets(GLTFContext& gltf, uint32_t renderWidth, uint32_t renderHeight, uint32_t displayWidth, uint32_t displayHeight);
+void destroyDLSSRenderTargets(GLTFContext& gltf);
+void resizeDLSSRenderTargets(GLTFContext& gltf, uint32_t renderWidth, uint32_t renderHeight, uint32_t displayWidth, uint32_t displayHeight);
+
+void render_GLTF(
+	GLTFContext& gltf,
+	uint32_t imageIndex,
+	VkCommandBuffer cmd,
+	const glm::mat4& model,
+	const glm::mat4& view,
+	const glm::mat4& proj,
+	const glm::mat4& jitteredProj,
+	bool useDLSS,
+	bool rebuildRenderList = false);
+void drawDLSSToggle(App* app, GLTFContext& gltf);
+

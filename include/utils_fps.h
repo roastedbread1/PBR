@@ -9,7 +9,7 @@ struct FramePerSecondCounter
 	unsigned int numFrames = 0;
 	double accumulatedTime = 0;
 	float currentFPS = 0.0f;
-	bool printFPS = true;
+	bool printFPS = false;
 };
 
 

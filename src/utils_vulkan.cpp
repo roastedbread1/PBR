@@ -4,13 +4,13 @@
 #include <utils_cubemap.h>
 #include <glslang/Public/resource_limits_c.h>
 #include <glslang/Public/ResourceLimits.h>
+#include <dlss.h>
 
 #define VK_NO_PROTOTYPES
 #define GLFW_INCLUDE_VULKAN
 
 #include <GLFW/glfw3.h>
 
-//#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 #include <stb_image_resize2.h>
 
@@ -240,14 +240,14 @@ static size_t compile_shader(glslang_stage_t stage, const char* shaderSource, Sh
 }
 
 
-void create_instance(VkInstance* instance)
+void create_instance(VkInstance* instance, VkExtensionProperties* reqExts , uint32_t extensionCount )
 {
 	const std::vector<const char*> validationLayers =
 	{
 		"VK_LAYER_KHRONOS_validation"
 	};
 
-	const std::vector<const char*> exts =
+	std::vector<const char*> exts =
 	{
 		"VK_KHR_surface",
 		
@@ -268,6 +268,20 @@ void create_instance(VkInstance* instance)
 		, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME
 	};
 
+	
+	
+	if (reqExts != nullptr)
+	{
+		for (uint32_t i = 0; i < extensionCount; i++)
+		{
+			exts.push_back(reqExts[i].extensionName);
+			printf("Instance Required Extensions:%s\n", reqExts[i].extensionName);
+		}
+	}
+
+
+	
+
 	const VkApplicationInfo appInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -281,7 +295,7 @@ void create_instance(VkInstance* instance)
 
 	const VkInstanceCreateInfo createInfo =
 	{
-				.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 		.pNext = nullptr,
 		.flags = 0,
 		.pApplicationInfo = &appInfo,
@@ -727,7 +741,8 @@ bool init_vulkan_render_device2(VulkanInstance& vk, VulkanRenderDevice& vkDev, u
 	return true;
 }
 
-bool init_vulkan_render_device3(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, const VulkanContextFeatures& ctxFeatures)
+bool init_vulkan_render_device3(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, const VulkanContextFeatures& ctxFeatures,
+	DeviceExtensionQueryCallback extQueryCallback)
 {
 	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
@@ -752,11 +767,18 @@ bool init_vulkan_render_device3(VulkanInstance& vk, VulkanRenderDevice& vkDev, u
 	};
 
 	//shader draw param requirements
-	VkPhysicalDeviceVulkan11Features features11 = {
+	VkPhysicalDeviceVulkan11Features  features11 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
 		.pNext = &physicalDeviceDescriptorIndexingFeatures, 
 		.storageBuffer16BitAccess = VK_TRUE,
 		.shaderDrawParameters = VK_TRUE,
+	};
+
+	VkPhysicalDeviceVulkan14Features features14 =
+	{
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+		.pNext = &features11,
+		.pushDescriptor = VK_TRUE,
 	};
 	VkPhysicalDeviceFeatures deviceFeatures = {
 		/* wireframe outlines */
@@ -773,15 +795,17 @@ bool init_vulkan_render_device3(VulkanInstance& vk, VulkanRenderDevice& vkDev, u
 		.shaderSampledImageArrayDynamicIndexing = VK_TRUE,
 		/* GL <-> VK material shader compatibility */
 		.shaderInt64 = VK_TRUE,
+		
 	};
 
 	VkPhysicalDeviceFeatures2 deviceFeatures2 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-		.pNext = &features11,
+		.pNext = &features14,
 		.features = deviceFeatures  /*  */
 	};
 
-	return init_vulkan_render_device2_with_compute(vk, vkDev, width, height, is_device_suitable, deviceFeatures2, ctxFeatures.supportScreenshots_);
+	return init_vulkan_render_device2_with_compute(vk, vkDev, width, height, is_device_suitable, deviceFeatures2, ctxFeatures.supportScreenshots_,
+		extQueryCallback);
 }
 
 VkResult find_suitable_physical_device(VkInstance instance, std::function<bool(VkPhysicalDevice)> selector, VkPhysicalDevice* physicalDevice)
@@ -822,7 +846,8 @@ uint32_t find_queue_families(VkPhysicalDevice device, VkQueueFlags desiredFlags)
 
 	return 0;
 }
-bool init_vulkan_render_device2_with_compute(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, std::function<bool(VkPhysicalDevice)> selector, VkPhysicalDeviceFeatures2 deviceFeatures2, bool supportScreenshots)
+bool init_vulkan_render_device2_with_compute(VulkanInstance& vk, VulkanRenderDevice& vkDev, uint32_t width, uint32_t height, std::function<bool(VkPhysicalDevice)> selector, VkPhysicalDeviceFeatures2 deviceFeatures2, bool supportScreenshots,
+	DeviceExtensionQueryCallback extQueryCallback)
 {
 	vkDev.framebufferWidth = width;
 	vkDev.framebufferHeight = height;
@@ -832,7 +857,8 @@ bool init_vulkan_render_device2_with_compute(VulkanInstance& vk, VulkanRenderDev
 	//	VK_CHECK(createDevice2(vkDev.physicalDevice, deviceFeatures2, vkDev.graphicsFamily, &vkDev.device));
 	//	VK_CHECK(vkGetBestComputeQueue(vkDev.physicalDevice, &vkDev.computeFamily));
 	vkDev.computeFamily = find_queue_families(vkDev.physicalDevice, VK_QUEUE_COMPUTE_BIT);
-	VK_CHECK(create_device2_with_compute(vkDev.physicalDevice, deviceFeatures2, vkDev.graphicsFamily, vkDev.computeFamily, &vkDev.device));
+	VK_CHECK(create_device2_with_compute(vk.instance, vkDev.physicalDevice, deviceFeatures2, vkDev.graphicsFamily, vkDev.computeFamily, &vkDev.device, 
+		extQueryCallback));
 	volkLoadDevice(vkDev.device);
 	vkGetDeviceQueue(vkDev.device, vkDev.graphicsFamily, 0, &vkDev.graphicsQueue);
 	if (vkDev.graphicsQueue == nullptr)
@@ -2379,7 +2405,7 @@ bool create_texture_image(VulkanRenderDevice& vkDev, const char* filename, VkIma
 		printf("Failed to load [%s] texture\n", filename); fflush(stdout);
 		return false;
 	}
-	printf("DEBUG: Loaded %s. First pixel: %02X %02X %02X %02X\n", filename, pixels[0], pixels[1], pixels[2], pixels[3]);
+	//printf("DEBUG: Loaded %s. First pixel: %02X %02X %02X %02X\n", filename, pixels[0], pixels[1], pixels[2], pixels[3]);
 	VkFormat format = sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 
 	bool result = create_texture_image_from_data(vkDev, textureImage, textureImageMemory,
@@ -2693,52 +2719,86 @@ bool create_pbr_vertex_buffer(VulkanRenderDevice& vkDev, const char* filename, V
 
 
 
-VkResult create_device2_with_compute(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2 deviceFeatures2, uint32_t graphicsFamily, uint32_t computeFamily, VkDevice* device)
+VkResult create_device2_with_compute(VkInstance instance, VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2 deviceFeatures2, uint32_t graphicsFamily, uint32_t computeFamily, VkDevice* device,
+	DeviceExtensionQueryCallback extQueryCallback)
 {
-	const std::vector<const char*> extensions =
+	 std::vector<const char*> extensions =
 	{
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 		VK_KHR_MAINTENANCE3_EXTENSION_NAME,
 		VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
 		// legacy drivers Vulkan 1.1
 		VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
-		VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME
+		VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+		
 
 	};
+	
 
-	if (graphicsFamily == computeFamily)
-		return create_device2(physicalDevice, deviceFeatures2, graphicsFamily, device);
+	if (extQueryCallback)
+	{
+		std::vector<const char*> reqExts = extQueryCallback(instance, physicalDevice);
+		extensions.insert(extensions.end(), reqExts.begin(), reqExts.end());
+	}
 
+
+//NOTE:this actually hits so now im thinking of handling both of the queue in this function 
+// 	   because I dont want to pass in the extensions to the other function
+	//if (graphicsFamily == computeFamily)
+	//	return create_device2(physicalDevice, deviceFeatures2, graphicsFamily, device);
+
+	
 	const float queuePriorities[2] = { 0.f, 0.f };
-	const VkDeviceQueueCreateInfo qciGfx =
-	{
-		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.pNext = nullptr,
-		.flags = 0,
-		.queueFamilyIndex = graphicsFamily,
-		.queueCount = 1,
-		.pQueuePriorities = &queuePriorities[0]
-	};
+	const float priority = 1.0f;
 
-	const VkDeviceQueueCreateInfo qciComp =
+	std::vector<VkDeviceQueueCreateInfo> queueInfos;
+	if (graphicsFamily == computeFamily)
 	{
-		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.pNext = nullptr,
-		.flags = 0,
-		.queueFamilyIndex = computeFamily,
-		.queueCount = 1,
-		.pQueuePriorities = &queuePriorities[1]
-	};
+		VkDeviceQueueCreateInfo qci = {
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.queueFamilyIndex = graphicsFamily,
+			.queueCount = 1,
+			.pQueuePriorities = &priority
+		};
+		queueInfos.push_back(qci);
+	}
+	else
+	{
+		
+		const VkDeviceQueueCreateInfo qciGfx =
+		{
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.pNext = nullptr,
+			.flags = 0,
+			.queueFamilyIndex = graphicsFamily,
+			.queueCount = 1,
+			.pQueuePriorities = &queuePriorities[0]
+		};
+		queueInfos.push_back(qciGfx);
 
-	const VkDeviceQueueCreateInfo qci[2] = { qciGfx, qciComp };
+		const VkDeviceQueueCreateInfo qciComp =
+		{
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.pNext = nullptr,
+			.flags = 0,
+			.queueFamilyIndex = computeFamily,
+			.queueCount = 1,
+			.pQueuePriorities = &queuePriorities[1]
+		};
+		queueInfos.push_back(qciComp);
+	}
+	
+
+	//const VkDeviceQueueCreateInfo qci[2] = { qciGfx, qciComp };
+
 
 	const VkDeviceCreateInfo ci =
 	{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.pNext = &deviceFeatures2,
 		.flags = 0,
-		.queueCreateInfoCount = 2,
-		.pQueueCreateInfos = qci,
+		.queueCreateInfoCount = static_cast<uint32_t>(queueInfos.size()),
+		.pQueueCreateInfos = queueInfos.data(),
 		.enabledLayerCount = 0,
 		.ppEnabledLayerNames = nullptr,
 		.enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
@@ -2753,6 +2813,7 @@ VkResult create_device2_with_compute(VkPhysicalDevice physicalDevice, VkPhysical
 
 	return result;
 }
+
 VkResult create_device2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2 deviceFeatures2, uint32_t graphicsFamily, VkDevice* device)
 {
 	const std::vector<const char*> extensions =
@@ -2945,5 +3006,3 @@ void update_texture_in_descriptor_set_array(VulkanRenderDevice& vkDev, VkDescrip
 
 	vkUpdateDescriptorSets(vkDev.device, 1, &writeSet, 0, nullptr);
 }
-
-

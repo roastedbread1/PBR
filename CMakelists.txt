@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.12)
+
 #disables vcpkg because FUCK vcpkg FUCK THESE GUYS
 if(DEFINED ENV{VCPKG_ROOT})
     unset(ENV{VCPKG_ROOT})
@@ -9,7 +11,6 @@ if(DEFINED CMAKE_TOOLCHAIN_FILE)
     unset(CMAKE_TOOLCHAIN_FILE CACHE)
 endif()
 
-cmake_minimum_required(VERSION 3.12)
 project(3Drenderer)
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
@@ -17,7 +18,6 @@ set(GLFW_BUILD_SHARED_LIBS OFF CACHE BOOL "Build GLFW shared library" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "Build GLFW examples" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "Build GLFW tests" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "Build GLFW docs" FORCE)
-
 
 set(KTX_ROOT "D:/codes/libs/KTX-Software")
 
@@ -32,8 +32,7 @@ set(KTX_FEATURE_GL_UPLOAD OFF CACHE BOOL "" FORCE)
 set(BASISU_SUPPORT_SSE OFF CACHE BOOL "" FORCE)
 set(KTX_USE_GIT_VERSION OFF CACHE BOOL "" FORCE)
 
-
-set(KTX OFF CACHE BOOL "Build KTX" FORCE)  # This disables building the KTX command line tool
+set(KTX OFF CACHE BOOL "Build KTX" FORCE)  
 set(KTX_API_FILE "ktx.h" CACHE STRING "" FORCE)
 
 set(RAPIDJSON_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/rapidjson/include CACHE PATH "")
@@ -43,7 +42,6 @@ set(BUILD_EXTRAS OFF CACHE BOOL "Disable Bullet extras")
 
 if(NOT TARGET ktx)
     message(STATUS "external KTX from: ${KTX_ROOT}")
-    
     add_subdirectory(${KTX_ROOT} ${CMAKE_BINARY_DIR}/KTX-build)
 endif()
 
@@ -51,10 +49,8 @@ add_subdirectory(external/SPIRV-Headers)
 add_subdirectory(external/SPIRV-Tools)
 add_subdirectory(external/glfw)
 add_subdirectory(external/assimp)
-#add_subdirectory(external/bullet3)
 add_subdirectory(external/meshoptimizer)
 add_subdirectory(external/glslang)
-
 
 set(VOLK_SOURCES
     external/volk/volk.c
@@ -64,12 +60,10 @@ target_include_directories(volk PUBLIC
     external/volk
     ${Vulkan_INCLUDE_DIRS}  
 )
+
 set(IMGUIZMO_SOURCES
     external/ImGuizmo/ImGuizmo.cpp
 )
-
-
-
 
 set(IMGUI_SOURCES
     external/imgui/imgui.cpp
@@ -81,7 +75,6 @@ set(IMGUI_SOURCES
     external/implot/implot_items.cpp
     external/imgui/backends/imgui_impl_vulkan.cpp
     external/imgui/backends/imgui_impl_glfw.cpp
-     
 )
 
 add_library(imguizmo STATIC ${IMGUIZMO_SOURCES})
@@ -90,10 +83,6 @@ target_include_directories(imguizmo PUBLIC
     external/imgui  
 )
 
-if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-endif()
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CXX_EXTENSIONS OFF)
@@ -101,8 +90,36 @@ set(CXX_EXTENSIONS OFF)
 file(GLOB_RECURSE MY_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 add_executable(${CMAKE_PROJECT_NAME} ${MY_SOURCES} ${IMGUI_SOURCES})
 
+
+
+
+
+set(DLSS_ROOT "D:/codes/more codes/c++/PBR/DLSS")
+
+message(STATUS "DLSS enabled (Unconditional)")
+
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    "${DLSS_ROOT}/include"
+)
+
+if(MSVC)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+        "$<$<CONFIG:Debug>:${DLSS_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d_dbg.lib>"
+        "$<$<CONFIG:Release>:${DLSS_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx.lib>"
+    )
+endif()
+
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "$<$<CONFIG:Debug>:${DLSS_ROOT}/lib/Windows_x86_64/dev/nvngx_dlss.dll>"
+    "$<$<CONFIG:Release>:${DLSS_ROOT}/lib/Windows_x86_64/rel/nvngx_dlss.dll>"
+    $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>
+)
+
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE DLSS_ENABLED=1)
+
 target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC 
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/"   
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/"    
     external/imgui
     external/imgui/backends
     external/glm
@@ -113,7 +130,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC
     external/volk
     external/taskflow/taskflow
     ${KTX_ROOT}/include
-  #  external/bullet3/src
     external/assimp/include
     ${Vulkan_INCLUDE_DIRS} 
 )
@@ -129,7 +145,6 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE 
     glfw
     assimp
- #   BulletDynamics BulletCollision LinearMath
     meshoptimizer
     ktx
     glslang 
@@ -139,3 +154,4 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
     volk
     imguizmo
 )
+

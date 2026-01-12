@@ -120,12 +120,82 @@ void init_app(App* app, const AppConfig* cfg)
 	app->pipelineSamples = 1;
 
 	VK_CHECK(volkInitialize());
+
+
+
+
+	uint32_t extensionCount;
+	VkExtensionProperties* ngxExts;
+	//NOTE: This took longer than expected, I literally forgot to think for a second because the struct is so convoluted
+	NVSDK_NGX_FeatureDiscoveryInfo featureInfo = {
+	.SDKVersion = NVSDK_NGX_Version_API,
+	.FeatureID = NVSDK_NGX_Feature_SuperSampling,
+	.Identifier = {
+		.IdentifierType = NVSDK_NGX_Application_Identifier_Type_Project_Id,
+		.v = {
+			.ProjectDesc = {
+				.ProjectId = cfg->projectId,
+				.EngineType = NVSDK_NGX_ENGINE_TYPE_CUSTOM,
+				.EngineVersion = cfg->engineVersion,
+			}
+		}
+	},
+	.ApplicationDataPath = cfg->appDataPath,
+	.FeatureInfo = {},
+	};
+	//should I check ngxres???, I dont think this is even necessary because the default params for the subsequent function is a nullptr
+	//but we'll keep it for now idk
+	NVSDK_NGX_Result ngxRes = NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(
+		&featureInfo,
+		&extensionCount,
+		&ngxExts);
+
+
+
 	create_instance(&app->vkInstance.instance);
 	volkLoadInstance(app->vkInstance.instance);
 
 	setup_debug_callbacks(app->vkInstance.instance, &app->vkInstance.messenger, &app->vkInstance.reportCallback);
 	VK_CHECK(glfwCreateWindowSurface(app->vkInstance.instance, app->window, nullptr, &app->vkInstance.surface));
-	if (!init_vulkan_render_device3(app->vkInstance, app->vkDev, width, height, VulkanContextFeatures{})) {
+
+	//lambda for querying exts
+	DeviceExtensionQueryCallback reqDLSSexts = [cfg](VkInstance instance, VkPhysicalDevice device) -> std::vector<const char*>
+		{
+			std::vector<const char*> reqExts;
+			if (!cfg) return reqExts;
+
+			uint32_t count = 0;
+			VkExtensionProperties* exts = nullptr;
+			
+			NVSDK_NGX_FeatureDiscoveryInfo featureInfo = {
+				.SDKVersion = NVSDK_NGX_Version_API,
+				.FeatureID = NVSDK_NGX_Feature_SuperSampling,
+				.Identifier = {
+					.IdentifierType = NVSDK_NGX_Application_Identifier_Type_Project_Id,
+					.v = {
+						.ProjectDesc = {
+							.ProjectId = cfg->projectId,
+							.EngineType = NVSDK_NGX_ENGINE_TYPE_CUSTOM,
+							.EngineVersion = cfg->engineVersion,
+						}
+					}
+				},
+				.ApplicationDataPath = cfg->appDataPath,
+				.FeatureInfo = {},
+			};
+
+			if (NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(instance, device, &featureInfo, &count, &exts) == NVSDK_NGX_Result_Success)
+			{
+				for (uint32_t i = 0; i < count; i++) {
+					printf("DLSS Req Ext: %s\n", exts[i].extensionName);
+					reqExts.push_back(exts[i].extensionName);
+				}
+			}
+			return reqExts;
+		};
+	
+
+	if (!init_vulkan_render_device3(app->vkInstance, app->vkDev, width, height, VulkanContextFeatures{}, reqDLSSexts)) {
 		throw std::runtime_error("Failed to initialize Vulkan render device");
 	}
 	
@@ -279,6 +349,79 @@ void recreate_swapchain(App* app)
 	
 	create_swapchain_framebuffers(app);
 }
+
+void init_DLSS_from_app(App* app, AppConfig* cfg)
+{
+	DLSSInitParams initParams =
+	{
+	.instance = &app->vkInstance.instance,
+	.physicalDevice = &app->vkDev.physicalDevice,
+	.device = &app->vkDev.device,
+	.projectId= cfg->projectId,
+	.engineVersion= cfg->engineVersion,
+	.appDataPath= cfg->appDataPath,
+	.featureSearchPaths= nullptr,
+	.featuresSearchPathCount= 0,
+	};
+
+	if (!dlss_init(&app->dlssCtx, &initParams))
+	{
+		printf("DLSS init failed\n");
+		return;
+	}
+
+	if (!dlss_is_available(&app->dlssCtx))
+	{
+		printf("dlss is not available\n");
+		return;
+	}
+
+	
+	printf("dlss initalized\n");
+}
+
+void create_DLSS_feature(App* app, GLTFContext* gltf, VkCommandBuffer cmd)
+{
+
+	uint32_t displayWidth = app->vkDev.framebufferWidth;
+	uint32_t displayHeight = app->vkDev.framebufferHeight;
+
+	DLSSFeatureParams featureParams =
+	{
+		.targetWidth = displayWidth,
+		.targetHeight= displayHeight,
+		.mode= app->dlssMode,
+		.isHDR= false,
+		.motionVectorsLowRes= true,
+		.motionVectorsJittered= false,
+		.depthInverted= false,
+		.autoExposure= true,
+		.alphaUpscaling= false,
+	};
+
+	if (!dlss_create_feature(&app->dlssCtx, cmd, &featureParams))
+	{
+		printf("failed to create DLSS feature\n");
+		return;
+	}
+
+	dlss_get_render_resolution(&app->dlssCtx, &gltf->dlssRenderWidth, &gltf->dlssRenderHeight);
+	gltf->displayWidth = displayWidth;
+	gltf->displayHeight = displayHeight;
+	printf("DLSS: Render %ux%u -> Display %ux%u\n",
+		gltf->dlssRenderWidth, gltf->dlssRenderHeight,
+		displayWidth, displayHeight);
+	
+	createDLSSRenderTargets(*gltf, gltf->dlssRenderWidth, gltf->dlssRenderHeight,
+		displayWidth, displayHeight);
+
+	printf("DLSS: Render %ux%u -> Display %ux%u\n",
+		gltf->dlssRenderWidth, gltf->dlssRenderHeight,
+		displayWidth, displayHeight);
+	gltf->dlssEnabled = true;
+}
+
+
 
 void run_app(App* app, DrawFrameFunc drawFrame)
 {
@@ -879,3 +1022,5 @@ void draw_GTF_inspector_cameras(App* app, GLTFIntrospective& intro)
 	}
 	ImGui::End();
 }
+
+

@@ -31,9 +31,13 @@ layout(push_constant) uniform SkyboxPushConstants {
 
 layout (location=0) in vec3 dir;
 layout (location=0) out vec4 out_FragColor;
+layout (location=1) out vec2 out_MotionVector;
 
 
 void main() {
     vec3 color = textureLod(nonuniformEXT(samplerCube(kTexturesCube[pc.texCube], kSamplers[pc.samplerIdx])), normalize(dir), 0.0).rgb;
+    //float mv = length(out_MotionVector);
+//out_FragColor = vec4(mv * 10.0, mv * 10.0, mv * 10.0, 1.0);
     out_FragColor = vec4(color, 1.0);
+    out_MotionVector=vec2(0.0, 0.0);
 }
