@@ -781,6 +781,8 @@ bool init_vulkan_render_device3(VulkanInstance& vk, VulkanRenderDevice& vkDev, u
 		.pushDescriptor = VK_TRUE,
 	};
 	VkPhysicalDeviceFeatures deviceFeatures = {
+		/*different color blend on the MRT*/
+		.independentBlend = VK_TRUE,
 		/* wireframe outlines */
 		.geometryShader = (VkBool32)(ctxFeatures.geometryShader_ ? VK_TRUE : VK_FALSE),
 		/* tesselation experiments */

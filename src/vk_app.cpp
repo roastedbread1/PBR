@@ -1,5 +1,4 @@
 #include "vk_app.h"
-//#include <utils_gltf.h>
 #include <volk.h>
 #include <unordered_map>
 #include <algorithm>
@@ -43,6 +42,7 @@ static void glfw_scroll_callback(GLFWwindow* window, double dx, double dy)
 	io.MouseWheelH = (float)dx;
 	io.MouseWheel = (float)dy;
 }
+
 
 static void glfw_cursor_pos_callback(GLFWwindow* window, double x, double y)
 {
@@ -226,7 +226,7 @@ void init_app(App* app, const AppConfig* cfg)
 		throw std::runtime_error("Failed to create ImGui descriptor pool");
 	}
 
-	// Store swapchain format for ImGui
+	
 	SwapchainSupportDetails detailsImgui = query_swapchain_support(app->vkDev.physicalDevice, app->vkInstance.surface);
 	VkSurfaceFormatKHR surfaceFormatImgui = choose_swap_surface_format(detailsImgui.formats);
 	app->swapchainFormat = surfaceFormatImgui.format;
@@ -242,7 +242,7 @@ void init_app(App* app, const AppConfig* cfg)
 	init_info.ImageCount = (uint32_t)app->vkDev.swapchainImages.size();
 	init_info.CheckVkResultFn = [](VkResult err) { VK_CHECK(err); };
 
-	// Dynamic rendering setup
+	
 	init_info.UseDynamicRendering = true;
 	init_info.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
 	init_info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
@@ -498,8 +498,7 @@ void draw_grid_app(App* app, VkCommandBuffer buf, const glm::mat4 proj, const gl
 
 void draw_grid_with_cam_pos_app(App* app, VkCommandBuffer buf, const glm::mat4& mvp, const glm::vec3& origin, const glm::vec3& camPos, uint32_t numSamples, VkFormat colorFormat)
 {
-	// 1. Create Pipeline if it doesn't exist. 
-	// If samples change, we ignore it for now to prevent the crash.
+
 	if (app->gridPipeline == VK_NULL_HANDLE) {
 		app->pipelineSamples = numSamples;
 
@@ -513,7 +512,7 @@ void draw_grid_with_cam_pos_app(App* app, VkCommandBuffer buf, const glm::mat4& 
 			VK_CHECK(vkCreateDescriptorSetLayout(app->vkDev.device, &dslInfo, nullptr, &app->gridDescriptorSetLayout));
 		}
 
-		// Create Pipeline Layout
+	
 		if (app->gridPipelineLayout == VK_NULL_HANDLE) {
 			const struct PushConstants {
 				glm::mat4 mvp;
@@ -550,7 +549,7 @@ void draw_grid_with_cam_pos_app(App* app, VkCommandBuffer buf, const glm::mat4& 
 			VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
 			colorFormat,
 			depthFormat,
-			true, false, true, true, // DepthTest=True, DepthWrite=False
+			true, false, true, true, 
 			static_cast<VkSampleCountFlagBits>(app->pipelineSamples),
 			-1, -1, 0
 		)) {
@@ -558,7 +557,7 @@ void draw_grid_with_cam_pos_app(App* app, VkCommandBuffer buf, const glm::mat4& 
 		}
 	}
 
-	// 2. Record Commands
+	
 	const struct PushConstants {
 		glm::mat4 mvp;
 		glm::vec4 camPos;
@@ -696,161 +695,12 @@ void draw_GTF_inspector_app(App* app, GLTFIntrospective& intro)
 		return;
 	}
 
-	//ImGui::SetNextWindowPos(ImVec2(10, 300));
 
-	draw_GTF_inspector_animations_app(app, intro);
 	draw_GTF_inspector_materials(app, intro);
 	draw_GTF_inspector_cameras(app, intro);
 }
 
-void draw_GTF_inspector_animations_app(App* app, GLTFIntrospective& intro)
-{
-	(void)app;
-	if (!intro.showAnimations)
-		return;
 
-	if (ImGui::Begin("Animations", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoCollapse)) {
-		for (uint32_t a = 0; a < intro.animations.size(); ++a) {
-			auto it = std::find(intro.activeAnim.begin(), intro.activeAnim.end(), a);
-			bool oState = it != intro.activeAnim.end();
-			bool state = oState;
-			ImGui::Checkbox(intro.animations[a].c_str(), &state);
-
-			if (state) {
-				if (!oState) {
-					uint32_t freeSlot = intro.activeAnim.size() - 1;
-					if (auto nf = std::find(intro.activeAnim.begin(), intro.activeAnim.end(), ~0u); nf != intro.activeAnim.end()) {
-						freeSlot = std::distance(intro.activeAnim.begin(), nf);
-					}
-					intro.activeAnim[freeSlot] = a;
-				}
-			}
-			else {
-				if (it != intro.activeAnim.end()) {
-					*it = ~0u;
-				}
-			}
-		}
-	}
-
-	if (intro.showAnimationBlend) {
-		ImGui::SliderFloat("Blend", &intro.blend, 0, 1.0f);
-	}
-
-	ImGui::End();
-}
-
-//void draw_GTF_inspector_materials(App* app, GLTFIntrospective& intro)
-//{
-//	(void)app;
-//
-//	if (!intro.showMaterials || intro.materials.empty()) { return; }
-//
-//	if (ImGui::Begin("Materials", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings
-//		| ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoCollapse))
-//	{
-//		for (uint32_t m = 0; m < intro.materials.size(); ++m) {
-//			GLTFMaterialIntro& mat = intro.materials[m];
-//			const uint32_t& currentMask = intro.materials[m].currentMaterialMask;
-//
-//			auto setMaterialMask = [&m = intro.materials[m]](uint32_t flag, bool active) {
-//				m.modified = true;
-//				if (active) {
-//					m.currentMaterialMask |= flag;
-//				}
-//				else {
-//					m.currentMaterialMask &= ~flag;
-//				}
-//				};
-//
-//			const bool isUnlit = (currentMask & MaterialType_Unlit) == MaterialType_Unlit;
-//			bool state = false;
-//
-//			ImGui::Text("%s", mat.name.c_str());
-//			ImGui::PushID(m);
-//			state = isUnlit;
-//
-//			if (ImGui::RadioButton("Unlit", state)) {
-//				mat.currentMaterialMask = 0;
-//				setMaterialMask(MaterialType_Unlit, true);
-//			}
-//
-//			state = (currentMask & MaterialType_MetallicRoughness) == MaterialType_MetallicRoughness;
-//			if ((mat.materialMask & MaterialType_MetallicRoughness) == MaterialType_MetallicRoughness) {
-//				if (ImGui::RadioButton("MetallicRoughness", state)) {
-//					setMaterialMask(MaterialType_Unlit, false);
-//					setMaterialMask(MaterialType_SpecularGlossiness, false);
-//					setMaterialMask(MaterialType_MetallicRoughness, true);
-//				}
-//			}
-//
-//			state = (currentMask & MaterialType_SpecularGlossiness) == MaterialType_SpecularGlossiness;
-//			if ((mat.materialMask & MaterialType_SpecularGlossiness) == MaterialType_SpecularGlossiness) {
-//				if (ImGui::RadioButton("SpecularGlossiness", state)) {
-//					setMaterialMask(MaterialType_Unlit, false);
-//					setMaterialMask(MaterialType_SpecularGlossiness, true);
-//					setMaterialMask(MaterialType_MetallicRoughness, false);
-//				}
-//			}
-//
-//			state = (currentMask & MaterialType_Sheen) == MaterialType_Sheen;
-//			if ((mat.materialMask & MaterialType_Sheen) == MaterialType_Sheen) {
-//				ImGui::BeginDisabled(isUnlit);
-//				if (ImGui::Checkbox("Sheen", &state)) {
-//					setMaterialMask(MaterialType_Sheen, state);
-//				}
-//				ImGui::EndDisabled();
-//			}
-//
-//			state = (mat.currentMaterialMask & MaterialType_ClearCoat) == MaterialType_ClearCoat;
-//			if ((mat.materialMask & MaterialType_ClearCoat) == MaterialType_ClearCoat) {
-//				ImGui::BeginDisabled(isUnlit);
-//				if (ImGui::Checkbox("ClearCoat", &state)) {
-//					setMaterialMask(MaterialType_ClearCoat, state);
-//				}
-//				ImGui::EndDisabled();
-//			}
-//
-//			state = (mat.currentMaterialMask & MaterialType_Specular) == MaterialType_Specular;
-//			if ((mat.materialMask & MaterialType_Specular) == MaterialType_Specular) {
-//				ImGui::BeginDisabled(isUnlit);
-//				if (ImGui::Checkbox("Specular", &state)) {
-//					setMaterialMask(MaterialType_Specular, state);
-//				}
-//				ImGui::EndDisabled();
-//			}
-//
-//			state = (mat.currentMaterialMask & MaterialType_Transmission) == MaterialType_Transmission;
-//			if ((mat.materialMask & MaterialType_Transmission) == MaterialType_Transmission) {
-//				ImGui::BeginDisabled(isUnlit);
-//				if (ImGui::Checkbox("Transmission", &state)) {
-//					if (!state) {
-//						setMaterialMask(MaterialType_Volume, false);
-//					}
-//					setMaterialMask(MaterialType_Transmission, state);
-//				}
-//				ImGui::EndDisabled();
-//			}
-//
-//			state = (mat.currentMaterialMask & MaterialType_Volume) == MaterialType_Volume;
-//			if ((mat.materialMask & MaterialType_Volume) == MaterialType_Volume) {
-//				ImGui::BeginDisabled(isUnlit);
-//				if (ImGui::Checkbox("Volume", &state)) {
-//					setMaterialMask(MaterialType_Volume, state);
-//					if (state) {
-//						setMaterialMask(MaterialType_Transmission, true);
-//					}
-//				}
-//				ImGui::EndDisabled();
-//			}
-//
-//			ImGui::PopID();
-//		}
-//	}
-//
-//
-//	ImGui::End();
-//}
 
 void draw_GTF_inspector_materials(App* app, GLTFIntrospective& intro)
 {

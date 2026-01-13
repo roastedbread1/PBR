@@ -1486,30 +1486,55 @@ void GLTFContext_init(GLTFContext* context, App* app)
 void GLTFContext_destroy(GLTFContext* context)
 {
     VkDevice device = context->app->vkDev.device;
+
     destroyDLSSRenderTargets(*context);
-    GLTFGlobalSamplers_destroy(&context->samplers, device);
-    EnvironmentMapTextures_destroy(&context->envMapTextures, device);
-    destroy_line_canvas3D(context->canvas3d, device);
 
+    if (context->pipelineSolid_Pass1) vkDestroyPipeline(device, context->pipelineSolid_Pass1, nullptr);
+    if (context->pipelineTransparent_Pass1) vkDestroyPipeline(device, context->pipelineTransparent_Pass1, nullptr);
+    if (context->pipelineSolid_Pass2) vkDestroyPipeline(device, context->pipelineSolid_Pass2, nullptr);
+    if (context->pipelineTransparent_Pass2) vkDestroyPipeline(device, context->pipelineTransparent_Pass2, nullptr);
+    if (context->skyboxPipeline) 
+    {
+        vkDestroyPipeline(device, context->skyboxPipeline, nullptr);
+        context->skyboxPipeline = VK_NULL_HANDLE;
+    }
+    if (context->skyboxPipelineLayout) 
+    {
+        vkDestroyPipelineLayout(device, context->skyboxPipelineLayout, nullptr);
+        context->skyboxPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (context->skyboxVert.shaderModule)
+    {
+        vkDestroyShaderModule(device, context->skyboxVert.shaderModule, nullptr);
+        context->skyboxVert.shaderModule = VK_NULL_HANDLE;
+    }
+    if (context->skyboxFrag.shaderModule) 
+    {
+        vkDestroyShaderModule(device, context->skyboxFrag.shaderModule, nullptr);
+        context->skyboxFrag.shaderModule = VK_NULL_HANDLE;
+    }
+    if (context->vert.shaderModule) vkDestroyShaderModule(device, context->vert.shaderModule, nullptr);
+    if (context->frag.shaderModule) vkDestroyShaderModule(device, context->frag.shaderModule, nullptr);
 
-    ///TODO: FIX ORDER ON VK DESTRUCTION
-    vkDestroyDescriptorPool(device, context->bindlessPool, nullptr);
-    vkDestroyDescriptorSetLayout(device, context->bindlessLayout, nullptr);
+    if (context->pipelineLayout) vkDestroyPipelineLayout(device, context->pipelineLayout, nullptr);
 
-    vkDestroyDescriptorPool(device, context->bindlessPool, nullptr);
-    vkDestroyPipelineLayout(device, context->pipelineLayout, nullptr);
-    vkDestroyDescriptorSetLayout(device, context->setLayout0, nullptr);
-    vkDestroyDescriptorSetLayout(device, context->setLayout1, nullptr);
-    vkDestroyDescriptorSetLayout(device, context->setLayout2, nullptr);
-    vkDestroyDescriptorSetLayout(device, context->setLayout3, nullptr);
+    if (context->bindlessPool) {
+        vkDestroyDescriptorPool(device, context->bindlessPool, nullptr);
+        context->bindlessPool = VK_NULL_HANDLE;
+        context->bindlessSet0 = VK_NULL_HANDLE;
+        context->bindlessSet2 = VK_NULL_HANDLE;
+        context->dummySet1 = VK_NULL_HANDLE;
+        context->dummySet3 = VK_NULL_HANDLE;
+    }
+    if (context->setLayout0) vkDestroyDescriptorSetLayout(device, context->setLayout0, nullptr);
+    if (context->setLayout1) vkDestroyDescriptorSetLayout(device, context->setLayout1, nullptr);
+    if (context->setLayout2) vkDestroyDescriptorSetLayout(device, context->setLayout2, nullptr);
+    if (context->setLayout3) vkDestroyDescriptorSetLayout(device, context->setLayout3, nullptr);
 
-
-
-    auto destroyBuf = [&](VulkanBuffer& buf)
-        {
-            if (buf.buffer) vkDestroyBuffer(device, buf.buffer, nullptr);
-            if (buf.memory) vkFreeMemory(device, buf.memory, nullptr);
-            buf = {};
+    auto destroyBuf = [&](VulkanBuffer& buf) {
+        if (buf.buffer) vkDestroyBuffer(device, buf.buffer, nullptr);
+        if (buf.memory) vkFreeMemory(device, buf.memory, nullptr);
+        buf = {};
         };
 
     destroyBuf(context->envBuffer);
@@ -1518,32 +1543,38 @@ void GLTFContext_destroy(GLTFContext* context)
     destroyBuf(context->transformBuffer);
     destroyBuf(context->matricesBuffer);
     destroyBuf(context->prevMatricesBuffer);
-
-
     destroyBuf(context->vertexBuffer);
     destroyBuf(context->vertexSkinningBuffer);
- 
     destroyBuf(context->indexBuffer);
     destroyBuf(context->matBuffer);
 
+    if (context->motionVectorTex.image.image) {
+        destroy_vulkan_image(device, context->motionVectorTex.image);
+        context->motionVectorTex = {};
+    }
 
-    
+    if (context->offscreenTex.image.image) {
+        destroy_vulkan_image(device, context->offscreenTex.image);
+    }
+    if (context->offscreenFbView) {
+        vkDestroyImageView(device, context->offscreenFbView, nullptr);
+        context->offscreenFbView = VK_NULL_HANDLE;
+    }
+    context->offscreenTex = {};
 
-    
-    vkDestroyPipeline(device, context->pipelineSolid_Pass1, nullptr);
-    vkDestroyPipeline(device, context->pipelineTransparent_Pass1, nullptr);
-    vkDestroyPipeline(device, context->pipelineSolid_Pass2, nullptr);
-    vkDestroyPipeline(device, context->pipelineTransparent_Pass2, nullptr);
+    if (context->dummyWhite.image.image) {
+        destroy_vulkan_image(device, context->dummyWhite.image);
+        context->dummyWhite = {};
+    }
 
-    vkDestroyShaderModule(device, context->vert.shaderModule, nullptr);
-    vkDestroyShaderModule(device, context->frag.shaderModule, nullptr);
+    GLTFGlobalSamplers_destroy(&context->samplers, device);
+    EnvironmentMapTextures_destroy(&context->envMapTextures, device);
 
-
-
-
-    destroy_vulkan_image(device, context->offscreenTex.image);
-    vkDestroyImageView(device, context->offscreenFbView, nullptr);
-
+    if (context->canvas3d) {
+        destroy_line_canvas3D(context->canvas3d, device);
+        delete context->canvas3d;
+        context->canvas3d = nullptr;
+    }
 
     for (auto& matTextures : context->glTFDataholder.textures) {
         destroy_vulkan_image(device, matTextures.baseColorTexture.image);
@@ -1565,6 +1596,23 @@ void GLTFContext_destroy(GLTFContext* context)
         destroy_vulkan_image(device, matTextures.anisotropyTexture.image);
         destroy_vulkan_image(device, matTextures.white.image);
     }
+
+    context->glTFDataholder.textures.clear();
+    context->nodesStorage.clear();
+    context->meshesStorage.clear();
+    context->transforms.clear();
+    context->matrices.clear();
+    context->opaqueNodes.clear();
+    context->transparentNodes.clear();
+    context->transmissionNodes.clear();
+    context->lights.clear();
+    context->textureIndexMap.clear();
+
+    
+    context->selectedNodeIdx = -1;
+    context->isFirstFrame = true;
+    context->frameIndex = 0;
+
 }
 
 bool GLTFContext_isScreenCopyRequired(const GLTFContext* context)
@@ -2249,20 +2297,23 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
     VK_CHECK(vkCreateGraphicsPipelines(vkDev.device, VK_NULL_HANDLE, 1, &piTrans1, nullptr, &gltf.pipelineTransparent_Pass1));
 
 
-    VkPipelineColorBlendAttachmentState attTransparent2 = {
-        VK_TRUE,
-        VK_BLEND_FACTOR_SRC_ALPHA,           
-        VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, 
-        VK_BLEND_OP_ADD,                     
-        VK_BLEND_FACTOR_ONE,                 
-        VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, 
-        VK_BLEND_OP_ADD,                     
-        0xf
-    };
+    VkPipelineColorBlendAttachmentState transAttachments2[2] = {};
+    transAttachments2[0].blendEnable = VK_TRUE;
+    transAttachments2[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    transAttachments2[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    transAttachments2[0].colorBlendOp = VK_BLEND_OP_ADD;
+    transAttachments2[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    transAttachments2[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    transAttachments2[0].alphaBlendOp = VK_BLEND_OP_ADD;
+    transAttachments2[0].colorWriteMask = 0xF;
+    // Motion vectors - don't write in pass 2
+    transAttachments2[1].blendEnable = VK_FALSE;
+    transAttachments2[1].colorWriteMask = 0;
+
 
     VkPipelineColorBlendStateCreateInfo cbTransparent2 = {
         VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-        nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 1, &attTransparent2,
+        nullptr, 0, VK_FALSE, VK_LOGIC_OP_COPY, 2, transAttachments2,
     };
 
     VkGraphicsPipelineCreateInfo piTrans2 = pi;
@@ -3337,7 +3388,8 @@ void drawGizmo(GLTFContext& gltf)
 
     ImGuizmo::BeginFrame();
 
-    glm::mat4 worldMatrix = gltf.frameData.model * gltf.matrices[node.modelMtxId];
+    glm::mat4 globalModel = gltf.frameData.model;
+    glm::mat4 currentWorldMatrix = globalModel * gltf.matrices[node.modelMtxId];
 
     ImGuizmo::SetOrthographic(false);
 
@@ -3383,33 +3435,16 @@ void drawGizmo(GLTFContext& gltf)
         glm::value_ptr(gltf.frameData.proj),
         currentOp,
         currentMode,
-        glm::value_ptr(worldMatrix),
+        glm::value_ptr(currentWorldMatrix),
         nullptr))
     {
     
-        bool valid = true;
-        for (int i = 0; i < 4 && valid; i++) {
-            for (int j = 0; j < 4 && valid; j++) {
-                if (std::isnan(worldMatrix[i][j]) || std::isinf(worldMatrix[i][j])) {
-                    valid = false;
-                }
-            }
-        }
-
-        if (valid) {
-
-            glm::mat4 localMatrix = glm::inverse(gltf.frameData.model) * worldMatrix;
-
-            gltf.matrices[node.modelMtxId] = localMatrix;
-
-            upload_buffer_data(
-                gltf.app->vkDev,
-                gltf.matricesBuffer.memory,
-                node.modelMtxId * sizeof(glm::mat4),
-                &localMatrix,
-                sizeof(glm::mat4)
-            );
-        }
+        glm::mat4 newModelMatrix = glm::inverse(globalModel) * currentWorldMatrix;
+        glm::mat4 oldModelMatrix = gltf.matrices[node.modelMtxId];
+        glm::mat4 parentMatrix = oldModelMatrix * glm::inverse(node.transform);
+        node.transform = glm::inverse(parentMatrix) * newModelMatrix;
+        updateNodeHierarchy(gltf, gltf.selectedNodeIdx, parentMatrix);
+        upload_buffer_data(gltf.app->vkDev,gltf.matricesBuffer.memory,0,gltf.matrices.data(),gltf.matrices.size() * sizeof(glm::mat4));
     }
 }
 
@@ -3419,12 +3454,12 @@ void drawSelector(GLTFContext* gltf)
     ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin("Scene Hierarchy", nullptr, ImGuiWindowFlags_NoCollapse)) {
-
-        
         ImGui::TextDisabled("Nodes: %zu", gltf->nodesStorage.size());
         ImGui::Separator();
 
-        
+        int32_t nodeToDelete = -1;
+
+
         if (ImGui::BeginChild("NodesList", ImVec2(0, 0), true)) {
             for (uint32_t i = 0; i < gltf->nodesStorage.size(); i++) {
                 const auto& node = gltf->nodesStorage[i];
@@ -3436,11 +3471,13 @@ void drawSelector(GLTFContext* gltf)
                 if (ImGui::Selectable(label.c_str(), isSelected)) {
                     gltf->selectedNodeIdx = i;
                 }
+
             }
             ImGui::EndChild();
         }
+  
+        ImGui::End();
     }
-    ImGui::End();
 }
 
 
@@ -3462,5 +3499,19 @@ void drawDLSSToggle(App* app, GLTFContext& gltf)
     if (gltf.dlssEnabled) {
         ImGui::Text("Render: %ux%u", gltf.dlssRenderWidth, gltf.dlssRenderHeight);
         ImGui::Text("Output: %ux%u", gltf.displayWidth, gltf.displayHeight);
+    }
+}
+
+void updateNodeHierarchy(GLTFContext& gltf, uint32_t nodeIdx, const glm::mat4& parentMat)
+{
+    GLTFNode& node = gltf.nodesStorage[nodeIdx];
+    glm::mat4 newModelMat = parentMat * node.transform;
+
+    if (node.modelMtxId < gltf.matrices.size()) {
+        gltf.matrices[node.modelMtxId] = newModelMat;
+    }
+
+    for (uint32_t childId : node.children) {
+        updateNodeHierarchy(gltf, childId, newModelMat);
     }
 }

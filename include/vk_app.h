@@ -38,8 +38,6 @@ struct GLTFIntrospective
 {
 	std::vector<std::string> cameras;
 	uint32_t activeCamera = ~0u;
-	std::vector<std::string> animations;
-	std::vector<uint32_t> activeAnim;
 
 	std::vector<std::string> extensions;
 	std::vector<uint32_t> activeExtensions;
@@ -49,8 +47,6 @@ struct GLTFIntrospective
 
 	float blend = 0.5f;
 
-	bool showAnimations = false;
-	bool showAnimationBlend= false;
 	bool showCameras = false;
 	bool showMaterials = false;
 };
@@ -128,7 +124,6 @@ void draw_grid_with_cam_pos_app(App* app, VkCommandBuffer buf, const glm::mat4& 
 void draw_fps(App* app);
 
 void draw_GTF_inspector_app(App* app, GLTFIntrospective& intro);
-void draw_GTF_inspector_animations_app(App* app, GLTFIntrospective& intro);
 void draw_GTF_inspector_materials(App* app, GLTFIntrospective& intro);
 void draw_GTF_inspector_cameras(App* app, GLTFIntrospective& intro);
 

@@ -17,10 +17,21 @@
 
 GLTFContext gltf;
 GLTFIntrospective gltfInspector = {
-    .showAnimations = false,
     .showCameras = false,
     .showMaterials = true,
 };
+std::string pendingDroppedFile;
+
+void drop_callback(GLFWwindow* window, int count, const char** paths)
+{
+    if (count > 0) {
+        std::string path = paths[0];  
+        if (path.ends_with(".gltf") || path.ends_with(".glb")) {
+            pendingDroppedFile = path;
+            printf("Queued for loading: %s\n", path.c_str());
+        }
+    }
+}
 
 glm::mat4 applyJitter(const glm::mat4& proj, float jitterX, float jitterY,
     uint32_t renderWidth, uint32_t renderHeight)
@@ -52,7 +63,7 @@ int main()
     };
 
     init_app(&app, &cfg);
-
+    glfwSetDropCallback(app.window, drop_callback);
 
 
 
@@ -76,7 +87,7 @@ int main()
     
         
         
-    std::string model = "CompareIor";
+    std::string model = "ABeautifulGame";
 
     
     std::string gltfPath = "D:/codes/more codes/c++/PBR/data/glTF-Sample-Assets/Models/" + model + "/glTF/" + model + ".gltf";
@@ -89,6 +100,33 @@ run_app(
     [](App* app, uint32_t width, uint32_t height, float aspectRatio, float deltaSeconds)
     {
         VulkanRenderDevice& vkDev = app->vkDev;
+
+        if (!pendingDroppedFile.empty()) {
+            vkDeviceWaitIdle(vkDev.device);
+
+            if (app->dlssInitialized) {
+                dlss_release_feature(&app->dlssCtx);
+                app->dlssInitialized = false;
+            }
+
+            gltf.inspector->modifiedMaterial = {};
+            gltf.inspector->materials = {};
+            GLTFIntrospective* savedInspector = gltf.inspector; 
+
+            GLTFContext_destroy(&gltf);
+            GLTFContext* newGltf = new GLTFContext();
+            GLTFContext_destroy(&gltf);
+            gltf = *newGltf;
+            delete newGltf;
+
+            GLTFContext_init(&gltf, app);
+            gltf.inspector = savedInspector;  
+
+            std::string basePath = pendingDroppedFile.substr(0, pendingDroppedFile.find_last_of("/\\") + 1);
+            loadGLTF(gltf, pendingDroppedFile.c_str(), basePath.c_str());
+
+            pendingDroppedFile.clear();
+        }
 
         // resize
         if (vkDev.framebufferWidth != width || vkDev.framebufferHeight != height)
@@ -176,7 +214,7 @@ run_app(
         }
         else
         {
-            // No jitter for native
+            
             gltf.jitterOffset = { 0, 0 };
             gltf.prevJitterOffset = { 0, 0 };
 
@@ -215,7 +253,7 @@ run_app(
             dlss_evaluate(&app->dlssCtx, cmd, &evalParams);
             gltf.dlssNeedsReset = false;
 
-            // Blit DLSS output to swapchain
+            
             transition_image_layout_cmd(cmd, gltf.dlssColorOutput.image.image, VK_FORMAT_R16G16B16A16_SFLOAT,
                 VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 1, 1);
             transition_image_layout_cmd(cmd, vkDev.swapchainImages[imageIndex], VK_FORMAT_B8G8R8A8_UNORM,
@@ -232,15 +270,15 @@ run_app(
                 vkDev.swapchainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 1, &blit, VK_FILTER_LINEAR);
 
-            // Prepare swapchain for ImGui
+            
             transition_image_layout_cmd(cmd, vkDev.swapchainImages[imageIndex], VK_FORMAT_B8G8R8A8_UNORM,
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
 
-            // Reset DLSS output layout for next frame
+            
             transition_image_layout_cmd(cmd, gltf.dlssColorOutput.image.image, VK_FORMAT_R16G16B16A16_SFLOAT,
                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, 1, 1);
 
-            // Render ImGui for DLSS path (at full resolution)
+            
             ImGui_ImplVulkan_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
@@ -286,7 +324,7 @@ run_app(
             gltf.frameIndex++;
         }
 
-        // Final barrier for present
+        
         VkImageMemoryBarrier barrier = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
@@ -312,7 +350,7 @@ run_app(
 
         VK_CHECK(vkEndCommandBuffer(cmd));
 
-        // Submit
+
         VkSubmitInfo submitInfo = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
         VkSemaphore waitSemaphores[] = { app->imageAvailableSemaphores[app->currentFrame] };
         VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
@@ -327,7 +365,7 @@ run_app(
 
         VK_CHECK(vkQueueSubmit(vkDev.graphicsQueue, 1, &submitInfo, app->inFlightFences[imageIndex]));
 
-        // Present
+        
         VkPresentInfoKHR presentInfo = { .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
         presentInfo.waitSemaphoreCount = 1;
         presentInfo.pWaitSemaphores = signalSemaphores;

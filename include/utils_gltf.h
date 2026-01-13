@@ -389,7 +389,6 @@ struct GLTFContext {
 	std::vector<uint32_t> transmissionNodes;
 	std::vector<uint32_t> transparentNodes;
 
-
 	
 	VkPipelineLayout pipelineLayout; 
 
@@ -585,3 +584,4 @@ void render_GLTF(
 	bool rebuildRenderList = false);
 void drawDLSSToggle(App* app, GLTFContext& gltf);
 
+void updateNodeHierarchy(GLTFContext& gltf, uint32_t nodeIdx, const glm::mat4& parentMat);
