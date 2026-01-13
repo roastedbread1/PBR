@@ -18,7 +18,8 @@ set(GLFW_BUILD_SHARED_LIBS OFF CACHE BOOL "Build GLFW shared library" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "Build GLFW examples" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "Build GLFW tests" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "Build GLFW docs" FORCE)
-
+#I genuinely do not know how to handle this any other way, because ktx cannot handle whitespace for some reason
+#so I just put them out there
 set(KTX_ROOT "D:/codes/libs/KTX-Software")
 
 find_package(Vulkan REQUIRED)
@@ -94,7 +95,7 @@ add_executable(${CMAKE_PROJECT_NAME} ${MY_SOURCES} ${IMGUI_SOURCES})
 
 
 
-set(DLSS_ROOT "D:/codes/more codes/c++/PBR/DLSS")
+set(DLSS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/DLSS)
 
 message(STATUS "DLSS enabled (Unconditional)")
 
@@ -114,6 +115,32 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     "$<$<CONFIG:Debug>:${DLSS_ROOT}/lib/Windows_x86_64/dev/nvngx_dlss.dll>"
     "$<$<CONFIG:Release>:${DLSS_ROOT}/lib/Windows_x86_64/rel/nvngx_dlss.dll>"
     $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>
+)
+
+set(ASSETS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data/glTF-Sample-Assets/Models")
+set(ENVMAP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data/envmap")
+set(SHADERS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data/shaders")
+
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+
+COMMENT "Copying assets and shaders to binary directory..."
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/envmap"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${ENVMAP_SOURCE_DIR}"
+    "$<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/envmap"
+
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${SHADERS_SOURCE_DIR}"
+    "$<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/shaders"
+
+     
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/assets/Models"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${ASSETS_SOURCE_DIR}"
+    "$<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/assets/Models"
+
+    
 )
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE DLSS_ENABLED=1)

@@ -535,8 +535,8 @@ void draw_grid_with_cam_pos_app(App* app, VkCommandBuffer buf, const glm::mat4& 
 		}
 
 		const std::vector<const char*> shaderFiles = {
-			"D:/codes/more codes/c++/PBR/src/Grid.vert",
-			"D:/codes/more codes/c++/PBR/src/Grid.frag"
+			"shaders/grid/Grid.vert",
+			"shaders/grid/Grid.frag"
 		};
 
 		VkFormat depthFormat = find_depth_format(app->vkDev.physicalDevice);

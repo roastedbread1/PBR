@@ -1020,8 +1020,8 @@ void prefilter_cubemap(GLTFContext* gltf, ktxTexture1* cube, const char* outputP
     VK_CHECK(vkCreatePipelineLayout(vkDev.device, &layoutInfo, nullptr, &pipelineLayout));
 
     std::vector<const char*> shaderFiles = {
-        "D:/codes/more codes/c++/PBR/data/prefilter/main.vert",
-        "D:/codes/more codes/c++/PBR/data/prefilter/main.frag"
+        "shaders/prefilter/main.vert",
+        "shaders/prefilter/main.frag"
     };
 
     VkPipeline pipeline;
@@ -1231,8 +1231,8 @@ void GLTFGlobalSamplers_destroy(GLTFGlobalSamplers* samplers, VkDevice device)
 void EnvironmentMapTextures_init(GLTFContext* gltf)
 {
     EnvironmentMapTextures_init_with_paths(
-        gltf, "D:/codes/more codes/c++/PBR/data/brdfLUT.ktx", "D:/codes/more codes/c++/PBR/data/kiara_1_dawn_8k_prefilter.ktx",
-        "D:/codes/more codes/c++/PBR/data/kiara_1_dawn_8k_irradiance.ktx", "D:/codes/more codes/c++/PBR/data/kiara_1_dawn_8k_charlie.ktx");
+        gltf, "envmap/brdfLUT.ktx", "envmap/kiara_1_dawn_8k_prefilter.ktx",
+        "envmap/kiara_1_dawn_8k_irradiance.ktx", "envmap/kiara_1_dawn_8k_charlie.ktx");
 }
 
 
@@ -2185,8 +2185,8 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
     create_buffer(vkDev.device, vkDev.physicalDevice, sizeof(GLTFFrameData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, hvProps, gltf.perFrameBuffer.buffer, gltf.perFrameBuffer.memory);
 
     // pipelines
-    VK_CHECK(create_shader_module(vkDev.device, &gltf.vert, "D:/codes/more codes/c++/PBR/data/gltf/main.vert"));
-    VK_CHECK(create_shader_module(vkDev.device, &gltf.frag, "D:/codes/more codes/c++/PBR/data/gltf/main.frag"));
+    VK_CHECK(create_shader_module(vkDev.device, &gltf.vert, "shaders/gltf/main.vert"));
+    VK_CHECK(create_shader_module(vkDev.device, &gltf.frag, "shaders/gltf/main.frag"));
 
     std::vector<VkPipelineShaderStageCreateInfo> stages = {
         shader_stage_info(VK_SHADER_STAGE_VERTEX_BIT, gltf.vert, "main"),
@@ -2339,8 +2339,8 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
 
     //skybox
     {
-        VK_CHECK(create_shader_module(vkDev.device, &gltf.skyboxVert, "D:/codes/more codes/c++/PBR/data/skybox/skybox.vert"));
-        VK_CHECK(create_shader_module(vkDev.device, &gltf.skyboxFrag, "D:/codes/more codes/c++/PBR/data/skybox/skybox.frag"));
+        VK_CHECK(create_shader_module(vkDev.device, &gltf.skyboxVert, "shaders/skybox/skybox.vert"));
+        VK_CHECK(create_shader_module(vkDev.device, &gltf.skyboxFrag, "shaders/skybox/skybox.frag"));
 
         std::vector<VkPipelineShaderStageCreateInfo> skyboxStages = {
             shader_stage_info(VK_SHADER_STAGE_VERTEX_BIT, gltf.skyboxVert, "main"),
@@ -2445,7 +2445,7 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
 
         //load skybox TODO: MOVE THIS SOMEWHERE ELSE, THIS IS SO SHIT HOLY FUCK WHAT IS THIS CODEPATH
         // NOTE THAT THIS IS PROBABLY VERY APPRORIATE, COMPARING IT TO THE PREVIOUS NOTE I MADE IN THE CONTEXT_INIT
-        gltf.envMapTextures.envMapSkybox = load_texture(vkDev,"D:/codes/more codes/c++/PBR/data/kiara_1_dawn_8k.hdr", VK_IMAGE_VIEW_TYPE_CUBE, true);
+        gltf.envMapTextures.envMapSkybox = load_texture(vkDev,"envmap/kiara_1_dawn_8k.hdr", VK_IMAGE_VIEW_TYPE_CUBE, true);
         if (gltf.envMapTextures.envMapSkybox.image.image == nullptr) { assert(0); exit(255); }
 
 
@@ -3057,7 +3057,7 @@ void generate_BRDF_LUT(VulkanRenderDevice& vkDev, const char* outputPath)
 {
 
     ShaderModule compShader;
-    VK_CHECK(create_shader_module(vkDev.device, &compShader, "D:/codes/more codes/c++/PBR/data/LUT/main.comp"));
+    VK_CHECK(create_shader_module(vkDev.device, &compShader, "shaders/LUT/main.comp"));
 
     VkSpecializationMapEntry specEntry =
     {

@@ -139,8 +139,8 @@ void render_line_canvas3D(LineCanvas3D* canvas, App* app, VkCommandBuffer buf, V
 		canvas->pipelineSamples = numSamples;
 
 	
-		VK_CHECK(create_shader_module(vkDev.device, &canvas->vert, "line_canvas.vert"));
-		VK_CHECK(create_shader_module(vkDev.device, &canvas->frag, "line_canvas.frag"));
+		VK_CHECK(create_shader_module(vkDev.device, &canvas->vert, "shaders/linecanvas/line_canvas.vert"));
+		VK_CHECK(create_shader_module(vkDev.device, &canvas->frag, "shaders/linecanvas/line_canvas.frag"));
 		const std::vector<const char*> shaderFiles = { "line_canvas.vert", "line_canvas.frag" };
 
 

@@ -113,7 +113,7 @@ run_app(
             gltf.inspector->materials = {};
             GLTFIntrospective* savedInspector = gltf.inspector; 
 
-            GLTFContext_destroy(&gltf);
+            
             GLTFContext* newGltf = new GLTFContext();
             GLTFContext_destroy(&gltf);
             gltf = *newGltf;
