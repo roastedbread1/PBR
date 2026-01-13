@@ -2,10 +2,10 @@
 PBR.bat
 /out
 #/external
-/data/kiara_1_dawn_8k_prefilter.ktx
-/data/empty_play_room_4k_prefilter.ktx
-/data/kiara_1_dawn_8k_charlie.ktx
-/data/empty_play_room_4k_charlie.ktx
+/data/envmap/kiara_1_dawn_8k_prefilter.ktx
+/data/envmap/empty_play_room_4k_prefilter.ktx
+/data/envmap/kiara_1_dawn_8k_charlie.ktx
+/data/envmap/empty_play_room_4k_charlie.ktx
 #/data/glTf-Sample-Assets
-/data/kiara_1_dawn_8k.hdr
+/data/envmap/kiara_1_dawn_8k.hdr
 /DLSS
