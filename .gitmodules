@@ -49,3 +49,6 @@
 [submodule "data/glTF-Sample-Assets"]
 	path = data/glTF-Sample-Assets
 	url = https://github.com/KhronosGroup/glTF-Sample-Assets.git
+[submodule "external/tracy"]
+	path = external/tracy
+	url = https://github.com/wolfpld/tracy.git
