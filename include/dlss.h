@@ -47,6 +47,7 @@ struct DLSSFeatureParams
 	uint32_t targetWidth;
 	uint32_t targetHeight;
 	DLSSQualityMode mode;
+	NVSDK_NGX_DLSS_Hint_Render_Preset dlssPreset = NVSDK_NGX_DLSS_Hint_Render_Preset_Default;
 
 	bool isHDR;
 	bool motionVectorsLowRes;
@@ -104,6 +105,7 @@ struct DLSSContext
 	NVSDK_NGX_Parameter* ngxParams;
 	NVSDK_NGX_Handle* dlssFeature;
 	DLSSQualityMode         currentMode;
+	NVSDK_NGX_DLSS_Hint_Render_Preset currentPreset = NVSDK_NGX_DLSS_Hint_Render_Preset_Default;
 	uint32_t                targetWidth;
 	uint32_t                targetHeight;
 	uint32_t                renderWidth;
@@ -148,6 +150,20 @@ inline const char* dlss_quality_mode_to_string(DLSSQualityMode mode)
 	default:                                return "Unknown";
 	}
 }
+inline const char* dlss_preset_to_string(NVSDK_NGX_DLSS_Hint_Render_Preset preset)
+{
+	switch (preset)
+	{
+	case NVSDK_NGX_DLSS_Hint_Render_Preset_Default: return "Default";
+	case NVSDK_NGX_DLSS_Hint_Render_Preset_F:       return "F (Deprecated)";
+	case NVSDK_NGX_DLSS_Hint_Render_Preset_J:       return "J (Less Ghosting)";
+	case NVSDK_NGX_DLSS_Hint_Render_Preset_K:       return "K (Transformer)";
+	case NVSDK_NGX_DLSS_Hint_Render_Preset_L:       return "L (Ultra Perf Default)";
+	case NVSDK_NGX_DLSS_Hint_Render_Preset_M:       return "M (Perf Default)";
+	default:                                         return "Unknown";
+	}
+}
+
 inline const char* dlss_result_to_string(NVSDK_NGX_Result result)
 {
 	switch (result)

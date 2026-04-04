@@ -23,6 +23,7 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "Build GLFW docs" FORCE)
 set(KTX_ROOT "D:/codes/libs/KTX-Software")
 
 find_package(Vulkan REQUIRED)
+option(TRACY_ENABLE "" ON)
 
 set(KTX_FEATURE_TESTS OFF CACHE BOOL "" FORCE)
 set(KTX_FEATURE_TOOLS OFF CACHE BOOL "" FORCE)
@@ -52,6 +53,7 @@ add_subdirectory(external/glfw)
 add_subdirectory(external/assimp)
 add_subdirectory(external/meshoptimizer)
 add_subdirectory(external/glslang)
+add_subdirectory(external/tracy)
 
 set(VOLK_SOURCES
     external/volk/volk.c
@@ -106,14 +108,14 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 if(MSVC)
     target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         "$<$<CONFIG:Debug>:${DLSS_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d_dbg.lib>"
-        "$<$<CONFIG:Release>:${DLSS_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx.lib>"
+        "$<$<NOT:$<CONFIG:Debug>>:${DLSS_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib>"
     )
 endif()
 
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "$<$<CONFIG:Debug>:${DLSS_ROOT}/lib/Windows_x86_64/dev/nvngx_dlss.dll>"
-    "$<$<CONFIG:Release>:${DLSS_ROOT}/lib/Windows_x86_64/rel/nvngx_dlss.dll>"
+    "$<$<NOT:$<CONFIG:Debug>>:${DLSS_ROOT}/lib/Windows_x86_64/rel/nvngx_dlss.dll>"
     $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>
 )
 
@@ -180,5 +182,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
     SPIRV
     volk
     imguizmo
+    Tracy::TracyClient
 )
 

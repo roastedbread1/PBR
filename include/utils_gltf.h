@@ -23,6 +23,7 @@
 typedef struct LineCanvas3D LineCanvas3D;
 typedef struct GLTFIntrospective GLTFIntrospective;
 struct App;
+struct FLIPContext;
 
 enum Type
 {
@@ -501,6 +502,22 @@ struct GLTFContext {
 	bool dlssEnabled = false;
 	bool dlssNeedsReset = true;
 
+	// FLIP comparison
+	FLIPContext* flipCtx = nullptr;
+	bool flipShowErrorMap = false;
+	bool flipCaptureReference = false;
+	bool flipCaptureTest = false;
+	bool flipReadbackReference = false;
+
+	// FLIP viewer textures (GPU, for ImGui display)
+	VulkanTexture flipReferenceTex{};
+	VulkanTexture flipTestTex{};
+	VulkanTexture flipErrorMapTex{};
+	VkDescriptorSet flipRefDS = VK_NULL_HANDLE;
+	VkDescriptorSet flipTestDS = VK_NULL_HANDLE;
+	VkDescriptorSet flipErrorDS = VK_NULL_HANDLE;
+	VkSampler flipViewerSampler = VK_NULL_HANDLE;
+	bool flipViewerOpen = false;
 };
 
 
@@ -583,5 +600,6 @@ void render_GLTF(
 	bool useDLSS,
 	bool rebuildRenderList = false);
 void drawDLSSToggle(App* app, GLTFContext& gltf);
+void drawFLIPComparison(App* app, GLTFContext& gltf);
 
 void updateNodeHierarchy(GLTFContext& gltf, uint32_t nodeIdx, const glm::mat4& parentMat);

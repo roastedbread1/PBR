@@ -19,7 +19,7 @@
 #include <utils.h>
 #include <utils_cubemap.h>	
 #include <utils_math.h>
-
+#include <profiler.h>
 #include <functional>
 
 struct App;
@@ -110,6 +110,7 @@ typedef struct App
 
 	DLSSContext dlssCtx = {};
 	DLSSQualityMode dlssMode = DLSSQualityMode::Quality;
+	NVSDK_NGX_DLSS_Hint_Render_Preset dlssPreset = NVSDK_NGX_DLSS_Hint_Render_Preset_Default;
 	bool dlssInitialized = false;
 } App;
 
@@ -141,5 +142,5 @@ void recreate_swapchain(App* app);
 
 
 void init_DLSS_from_app(App* app, AppConfig* cfg);
-void create_DLSS_feature(App* app, GLTFContext* gltf, VkCommandBuffer cmd);
+bool create_DLSS_feature(App* app, GLTFContext* gltf, VkCommandBuffer cmd);
 

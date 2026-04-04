@@ -1494,12 +1494,12 @@ bool create_uniform_buffer(VulkanRenderDevice& vkDev, VkBuffer& buffer, VkDevice
 
 void upload_buffer_data(VulkanRenderDevice& vkDev, const VkDeviceMemory& bufferMemory, VkDeviceSize deviceOffset, const void* data, const size_t dataSize)
 {
-
+	 
 	if (dataSize == 0) {
 		return;
 	}
 
-	//EASY_FUNCTION();
+	
 	void* mappedData = nullptr;
 	VK_CHECK(vkMapMemory(vkDev.device, bufferMemory, deviceOffset, dataSize, 0, &mappedData));	memcpy(mappedData, data, dataSize);
 	vkUnmapMemory(vkDev.device, bufferMemory);

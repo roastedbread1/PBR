@@ -9,3 +9,6 @@ PBR.bat
 #/data/glTf-Sample-Assets
 /data/envmap/kiara_1_dawn_8k.hdr
 /DLSS
+/data/envmap/kiara_1_dawn_8k_irradiance.ktx
+/data/envmap/brdfLUT.ktx
+/data skrips/

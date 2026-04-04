@@ -57,6 +57,7 @@ bool dlss_init(DLSSContext* ctx, const DLSSInitParams* params)
           pathInfo.Path = const_cast<wchar_t**>(params->featureSearchPaths);
           pathInfo.Length = params->featuresSearchPathCount;
           featureInfo.PathListInfo = pathInfo;
+          featureInfo.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_VERBOSE;
        }
        //TODO: figure out why its not triggering the # cpp (im not sure how this works, probably compiler flags) but the two nullptr should've been a default value
        NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_Init_with_ProjectID(params->projectId, NVSDK_NGX_ENGINE_TYPE_CUSTOM, params->engineVersion, params->appDataPath,
@@ -204,7 +205,7 @@ static bool manual_optimal_settings(uint32_t targetWidth, uint32_t targetHeight,
         scaleFactor = 2.0f;
         break;
     case DLSSQualityMode::UltraPerformance:
-    scaleFactor:3.0f;
+        scaleFactor = 3.0f;
         break;
     default: 
         return false;
@@ -295,6 +296,19 @@ bool dlss_query_optimal_settings(DLSSContext* ctx, uint32_t tWidth, uint32_t tHe
     return manual_optimal_settings(tWidth, tHeight, mode, outSettings);
 }
 
+static const char* dlss_get_preset_param_for_mode(DLSSQualityMode mode)
+{
+    switch (mode)
+    {
+    case DLSSQualityMode::DLAA:             return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA;
+    case DLSSQualityMode::Quality:          return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality;
+    case DLSSQualityMode::Balanced:         return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced;
+    case DLSSQualityMode::Performance:      return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance;
+    case DLSSQualityMode::UltraPerformance: return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance;
+    default:                                return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality;
+    }
+}
+
 bool dlss_create_feature(DLSSContext* ctx, VkCommandBuffer cmdBuffer, const DLSSFeatureParams* params)
 {
 
@@ -321,6 +335,12 @@ bool dlss_create_feature(DLSSContext* ctx, VkCommandBuffer cmdBuffer, const DLSS
 
     if (params->autoExposure) featureFlags |= NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
 
+    // Set render preset hint before feature creation
+    const char* presetParam = dlss_get_preset_param_for_mode(params->mode);
+    ctx->ngxParams->Set(presetParam, (unsigned int)params->dlssPreset);
+    printf("DLSS: Setting preset %s for mode %s\n",
+        dlss_preset_to_string(params->dlssPreset),
+        dlss_quality_mode_to_string(params->mode));
 
     NVSDK_NGX_DLSS_Create_Params dlssCreateParams = {};
     dlssCreateParams.Feature.InWidth = settings.renderWidth;
@@ -342,6 +362,7 @@ bool dlss_create_feature(DLSSContext* ctx, VkCommandBuffer cmdBuffer, const DLSS
     ctx->featureCreated = true;
     ctx->featureFlags = featureFlags;
     ctx->currentMode = params->mode;
+    ctx->currentPreset = params->dlssPreset;
     ctx->targetWidth = params->targetWidth;
     ctx->targetHeight = params->targetHeight;
     ctx->renderWidth = settings.renderWidth;

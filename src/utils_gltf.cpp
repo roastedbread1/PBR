@@ -1,4 +1,5 @@
 #include <utils_gltf.h>
+#include <flip_wrapper.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
@@ -81,10 +82,10 @@ const  uint32_t kBrdfH = 256;
 const uint32_t kNumSamples = 1024;
 const uint32_t kBufferSize = 4u * sizeof(uint16_t) * kBrdfW * kBrdfH;
 
-namespace
-{
 
-    static void update_descriptor_slot(VulkanRenderDevice& vkDev, VkDescriptorSet set, uint32_t binding, uint32_t index, VkImageView view, VkSampler sampler) {
+
+    static inline void update_descriptor_slot(VulkanRenderDevice& vkDev, VkDescriptorSet set, uint32_t binding, uint32_t index, VkImageView view, VkSampler sampler) {
+        PROFILER_FUNCTION();
         VkDescriptorImageInfo imageInfo = {
             .sampler = sampler,
             .imageView = view,
@@ -104,7 +105,7 @@ namespace
 
  
 
-    static std::string aitexture_type_to_string(aiTextureType type)
+    static inline  std::string aitexture_type_to_string(aiTextureType type)
     {
         switch (type)
         {
@@ -171,7 +172,7 @@ namespace
         }
     }
 
-    static void loadMaterialTexture(
+    static inline void loadMaterialTexture(
         GLTFContext* gltf,
         const aiMaterial* mtlDescriptor, aiTextureType textureType, const char* assetFolder,
         VulkanTexture& textureHandle,
@@ -205,8 +206,9 @@ namespace
         }
     }
 
-    VkDeviceAddress get_buffer_address(VkDevice device, VkBuffer buffer)
+    inline VkDeviceAddress get_buffer_address(VkDevice device, VkBuffer buffer)
     {
+        PROFILER_FUNCTION();
         if (buffer == VK_NULL_HANDLE) return 0;
         VkBufferDeviceAddressInfo info = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
@@ -215,8 +217,9 @@ namespace
         return vkGetBufferDeviceAddress(device, &info);
     }
 
-    uint32_t getNextMtxId(GLTFContext& gltf, const char* name, uint32_t& nextEmptyId, const glm::mat4& mtx)
+    inline  uint32_t getNextMtxId(GLTFContext& gltf, const char* name, uint32_t& nextEmptyId, const glm::mat4& mtx)
     {
+        PROFILER_FUNCTION();
         const auto it = gltf.bonesByName.find(name);
         const uint32_t mtxId = (it == gltf.bonesByName.end()) ? nextEmptyId++ : it->second.boneId;
         if (gltf.matrices.size() <= mtxId) {
@@ -226,8 +229,9 @@ namespace
         return mtxId;
     }
 
-    uint32_t getNodeId(GLTFContext& gltf, const char* name)
+    inline uint32_t getNodeId(GLTFContext& gltf, const char* name)
     {
+        PROFILER_FUNCTION();
         for (uint32_t i = 0; i != gltf.nodesStorage.size(); i++) {
             if (gltf.nodesStorage[i].name == name)
                 return i;
@@ -237,8 +241,9 @@ namespace
 
 
 
-    static uint32_t get_cubemap_index(GLTFContext& gltf, const VulkanTexture& tex)
+    static inline uint32_t get_cubemap_index(GLTFContext& gltf, const VulkanTexture& tex)
     {
+        PROFILER_FUNCTION();
         if (tex.image.imageView == VK_NULL_HANDLE) return 0;
 
         auto it = gltf.cubemapIndexMap.find(tex.image.imageView);
@@ -257,8 +262,9 @@ namespace
         return newIndex;
     }
 
-    ktxTexture1* bitmapToCube(Bitmap& bmp, bool mipmaps)
+    inline  ktxTexture1* bitmapToCube(Bitmap& bmp, bool mipmaps)
     {
+        PROFILER_FUNCTION();
         if (bmp.comp != 3 || bmp.type != eBitmapType_Cube || bmp.fmt != eBitmapFormat_Float)
         {
             printf("wrong bitmap properties\n");
@@ -348,11 +354,11 @@ namespace
         printf("\n");
         return cubemap;
     }
-}
-//exposing this since I need it in main
- uint32_t get_texture_index(GLTFContext& gltf, const VulkanTexture& tex)
-{
 
+//exposing this since I need it in main
+uint32_t get_texture_index(GLTFContext& gltf, const VulkanTexture& tex)
+{
+    // PROFILER_FUNCTION();
     if (tex.image.imageView == VK_NULL_HANDLE) {
         return 1; //white tex at 1
     }
@@ -381,6 +387,7 @@ namespace
 
  void createDLSSRenderTargets(GLTFContext& gltf, uint32_t renderWidth, uint32_t renderHeight, uint32_t displayWidth, uint32_t displayHeight)
  {
+     PROFILER_FUNCTION();
      VulkanRenderDevice& vkDev = gltf.app->vkDev;
      gltf.dlssRenderWidth = renderWidth;
      gltf.dlssRenderHeight = renderHeight;
@@ -482,6 +489,7 @@ namespace
 
  void destroyDLSSRenderTargets(GLTFContext& gltf)
  {
+     PROFILER_FUNCTION();
      VkDevice device = gltf.app->vkDev.device;
 
      destroy_vulkan_image(device, gltf.dlssColorInput.image);
@@ -498,6 +506,7 @@ namespace
  void resizeDLSSRenderTargets(GLTFContext& gltf, uint32_t renderWidth, uint32_t renderHeight,
      uint32_t displayWidth, uint32_t displayHeight)
  {
+     PROFILER_FUNCTION();
      if (gltf.dlssRenderWidth == renderWidth &&
          gltf.dlssRenderHeight == renderHeight &&
          gltf.displayWidth == displayWidth &&
@@ -515,6 +524,7 @@ namespace
 
  void render_GLTF(GLTFContext& gltf, uint32_t imageIndex, VkCommandBuffer cmd, const glm::mat4& model, const glm::mat4& view, const glm::mat4& proj, const glm::mat4& jitteredProj, bool useDLSS, bool rebuildRenderList)
  {
+     PROFILER_FUNCTION();
      VulkanRenderDevice& vkDev = gltf.app->vkDev;
 
      uint32_t renderWidth = useDLSS ? gltf.dlssRenderWidth : vkDev.framebufferWidth;
@@ -564,10 +574,11 @@ namespace
      .jitterOffset = gltf.jitterOffset,
      .prevJitterOffset = gltf.prevJitterOffset
      };
-
+     PROFILER_ZONE("upload buffer data", PROFILER_COLOR_SUBMIT);
      upload_buffer_data(vkDev, gltf.perFrameBuffer.memory, 0, &gltf.frameData, sizeof(GLTFFrameData));
      updateLights(gltf);
      upload_buffer_data(vkDev, gltf.matBuffer.memory, 0, &gltf.matPerFrame, sizeof(gltf.matPerFrame));
+     PROFILER_ZONE_END();
 
      VkImage colorTargetImage;
      VkImageView colorTargetView;
@@ -862,19 +873,79 @@ namespace
          transition_image_layout_cmd(cmd, gltf.motionVectorTex.image.image, VK_FORMAT_R16G16_SFLOAT,
              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
 
-         
+         // when screenCopy was used but pass 2 was skipped (all opaque with volumetric flag),
+         // the scene is stuck in offscreenTex and swapchain has nothing.
+         // blit offscreen -> swapchain so ImGui LOAD_OP_LOAD has valid content.
+         bool hasPass2 = !gltf.transmissionNodes.empty() || !gltf.transparentNodes.empty();
+         if (screenCopy && !hasPass2) {
+             transition_image_layout_cmd(cmd, gltf.offscreenTex.image.image, VK_FORMAT_B8G8R8A8_UNORM,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 1, 1);
+             transition_image_layout_cmd(cmd, swapchainImg, VK_FORMAT_B8G8R8A8_UNORM,
+                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, 1);
+
+             VkImageBlit fallbackBlit = {
+                 .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                 .srcOffsets = {{0, 0, 0}, {(int32_t)outputWidth, (int32_t)outputHeight, 1}},
+                 .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                 .dstOffsets = {{0, 0, 0}, {(int32_t)outputWidth, (int32_t)outputHeight, 1}},
+             };
+             vkCmdBlitImage(cmd, gltf.offscreenTex.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                 swapchainImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                 1, &fallbackBlit, VK_FILTER_NEAREST);
+
+             transition_image_layout_cmd(cmd, swapchainImg, VK_FORMAT_B8G8R8A8_UNORM,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+             transition_image_layout_cmd(cmd, gltf.offscreenTex.image.image, VK_FORMAT_B8G8R8A8_UNORM,
+                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
+         }
+
          ImGui_ImplVulkan_NewFrame();
          ImGui_ImplGlfw_NewFrame();
          ImGui::NewFrame();
 
-         if (gltf.inspector && gltf.app->cfg.showGLTFInspector) {
+    /*     if (gltf.inspector && gltf.app->cfg.showGLTFInspector) {
              draw_GTF_inspector_app(gltf.app, *gltf.inspector);
-         }
+         }*/
          draw_fps(gltf.app);
-         drawSelector(&gltf);
-         drawGizmo(gltf);
+        // drawSelector(&gltf);
+         //drawGizmo(gltf);
          drawDLSSToggle(gltf.app, gltf);
+         drawFLIPComparison(gltf.app, gltf);
          ImGui::Render();
+
+         // FLIP reference capture: blit the scene into offscreenTex for readback.
+         // done after ImGui::Render() so the capture flag from drawFLIPComparison is set,
+         // but before ImGui_ImplVulkan_RenderDrawData so the swapchain is still clean.
+         if (gltf.flipCaptureReference)
+         {
+             if (!screenCopy || hasPass2) {
+                 // scene is in the swapchain (rendered directly or composited by pass 2)
+                 transition_image_layout_cmd(cmd, swapchainImg, VK_FORMAT_B8G8R8A8_UNORM,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+                 transition_image_layout_cmd(cmd, gltf.offscreenTex.image.image, VK_FORMAT_B8G8R8A8_UNORM,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+                 VkImageBlit captureBlit = {
+                     .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                     .srcOffsets = {{0, 0, 0}, {(int32_t)outputWidth, (int32_t)outputHeight, 1}},
+                     .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                     .dstOffsets = {{0, 0, 0}, {(int32_t)gltf.offscreenTex.width, (int32_t)gltf.offscreenTex.height, 1}},
+                 };
+                 vkCmdBlitImage(cmd, swapchainImg, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     gltf.offscreenTex.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     1, &captureBlit, VK_FILTER_NEAREST);
+
+                 transition_image_layout_cmd(cmd, gltf.offscreenTex.image.image, VK_FORMAT_B8G8R8A8_UNORM,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                 transition_image_layout_cmd(cmd, swapchainImg, VK_FORMAT_B8G8R8A8_UNORM,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+             }
+             // else: screenCopy && !hasPass2 -- offscreenTex already has the scene
+             // and was transitioned to SHADER_READ_ONLY by the fallback blit above
+
+             gltf.flipReadbackReference = true;
+             gltf.flipCaptureReference = false;
+         }
 
          VkRenderingAttachmentInfo imguiColorAttachment = {
              .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -921,6 +992,7 @@ namespace
 
 void prefilter_cubemap(GLTFContext* gltf, ktxTexture1* cube, const char* outputPath, VulkanTexture& srcEnvMap, uint32_t srcEnvMapBindlessIdx, Distribution distribution, uint32_t sampleCount)
 {
+    PROFILER_FUNCTION();
     VulkanRenderDevice& vkDev = gltf->app->vkDev;
     printf("prefiltering... %d, %u", distribution, sampleCount);
 
@@ -1210,6 +1282,7 @@ void prefilter_cubemap(GLTFContext* gltf, ktxTexture1* cube, const char* outputP
 
 void GLTFGlobalSamplers_init(GLTFGlobalSamplers* samplers, VulkanRenderDevice& vkDev)
 {
+    PROFILER_FUNCTION();
     create_texture_sampler(vkDev.device, &samplers->clamp, VK_FILTER_LINEAR, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
     create_texture_sampler(vkDev.device, &samplers->wrap, VK_FILTER_LINEAR, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     create_texture_sampler(vkDev.device, &samplers->mirror, VK_FILTER_LINEAR, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT);
@@ -1217,6 +1290,7 @@ void GLTFGlobalSamplers_init(GLTFGlobalSamplers* samplers, VulkanRenderDevice& v
 
 void GLTFGlobalSamplers_destroy(GLTFGlobalSamplers* samplers, VkDevice device)
 {
+    PROFILER_FUNCTION();
     vkDestroySampler(device, samplers->clamp, nullptr);
     vkDestroySampler(device, samplers->wrap, nullptr);
     vkDestroySampler(device, samplers->mirror, nullptr);
@@ -1230,6 +1304,7 @@ void GLTFGlobalSamplers_destroy(GLTFGlobalSamplers* samplers, VkDevice device)
 ///MOVE THE SKYBOX HERE, THIS WILL TAKE 3 PARAM (CONTEXT + LUT AND HDR PATH) OR MAYBE TWO SINCE THE LUT IS UNIVERSAL
 void EnvironmentMapTextures_init(GLTFContext* gltf)
 {
+    PROFILER_FUNCTION();
     EnvironmentMapTextures_init_with_paths(
         gltf, "envmap/brdfLUT.ktx", "envmap/kiara_1_dawn_8k_prefilter.ktx",
         "envmap/kiara_1_dawn_8k_irradiance.ktx", "envmap/kiara_1_dawn_8k_charlie.ktx");
@@ -1241,7 +1316,7 @@ void  EnvironmentMapTextures_init_with_paths(
     GLTFContext* gltf, const char* brdfLUT, const char* prefilter,
     const char* irradiance, const char* prefilterCharlie)
 {
-
+    PROFILER_FUNCTION();
     //VulkanTexture load_texture(
       //  VulkanRenderDevice & vkDev, const char* fileName, VkImageViewType viewType, bool sRGB)
 
@@ -1283,6 +1358,7 @@ void  EnvironmentMapTextures_init_with_paths(
 
 void EnvironmentMapTextures_destroy(EnvironmentMapTextures* textures, VkDevice device) 
 {
+    PROFILER_FUNCTION();
      destroy_vulkan_image(device,  textures->texBRDF_LUT.image );
      destroy_vulkan_image(device, textures->envMapTexture.image);
      destroy_vulkan_image(device, textures->envMapTextureCharlie.image);
@@ -1291,6 +1367,7 @@ void EnvironmentMapTextures_destroy(EnvironmentMapTextures* textures, VkDevice d
 
 glm::mat4 GLTFCamera_getProjection(const GLTFCamera* camera, float windowAspect)
 {
+    PROFILER_FUNCTION();
     return camera->orthoWidth != 0.0f
         ? glm::ortho(
             -windowAspect / camera->orthoWidth, windowAspect / camera->orthoWidth, -1.0f / camera->orthoWidth,
@@ -1303,12 +1380,12 @@ glm::mat4 GLTFCamera_getProjection(const GLTFCamera* camera, float windowAspect)
 
 void GLTFContext_init(GLTFContext* context, App* app)
 {
+    PROFILER_FUNCTION();
     context->app = app;
     context->glTFDataholder.gltfContext = context;
     VulkanRenderDevice& vkDev = app->vkDev;
     context->isFirstFrame = true;
     GLTFGlobalSamplers_init(&context->samplers, vkDev);
-
     //desc pool & layouts
     {
         const uint32_t maxTextures2D = 1024;
@@ -1472,7 +1549,7 @@ void GLTFContext_init(GLTFContext* context, App* app)
     }
 
     //TODO: FIX THIS, THIS IS NOT A GOOD IDEA, I NEED TO COMMENT THIS OUT EVERY TIME IM GENERATING A NEW ENV MAP
-   EnvironmentMapTextures_init(context);
+  EnvironmentMapTextures_init(context);
     context->canvas3d = new LineCanvas3D();
     init_line_canvas3D(context->canvas3d);
 
@@ -1481,10 +1558,14 @@ void GLTFContext_init(GLTFContext* context, App* app)
 
     context->currentOffscreenTex = 0;*/
     context->doublesided = false;
+
+    context->flipCtx = new FLIPContext();
+    flip_init(context->flipCtx);
 }
 
 void GLTFContext_destroy(GLTFContext* context)
 {
+    PROFILER_FUNCTION();
     VkDevice device = context->app->vkDev.device;
 
     destroyDLSSRenderTargets(*context);
@@ -1613,6 +1694,26 @@ void GLTFContext_destroy(GLTFContext* context)
     context->isFirstFrame = true;
     context->frameIndex = 0;
 
+    // FLIP viewer cleanup
+    auto destroyFlipTex = [&](VulkanTexture& tex, VkDescriptorSet& ds) {
+        if (ds != VK_NULL_HANDLE) { ImGui_ImplVulkan_RemoveTexture(ds); ds = VK_NULL_HANDLE; }
+        if (tex.image.image != VK_NULL_HANDLE) { destroy_vulkan_image(device, tex.image); tex = {}; }
+    };
+    destroyFlipTex(context->flipReferenceTex, context->flipRefDS);
+    destroyFlipTex(context->flipTestTex, context->flipTestDS);
+    destroyFlipTex(context->flipErrorMapTex, context->flipErrorDS);
+    if (context->flipViewerSampler != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(device, context->flipViewerSampler, nullptr);
+        context->flipViewerSampler = VK_NULL_HANDLE;
+    }
+
+    if (context->flipCtx)
+    {
+        flip_shutdown(context->flipCtx);
+        delete context->flipCtx;
+        context->flipCtx = nullptr;
+    }
 }
 
 bool GLTFContext_isScreenCopyRequired(const GLTFContext* context)
@@ -1622,6 +1723,7 @@ bool GLTFContext_isScreenCopyRequired(const GLTFContext* context)
 
 bool assignUVandSampler(const GLTFGlobalSamplers& samplers, const aiMaterial* mtlDescriptor, aiTextureType textureType, uint32_t& uvIndex, uint32_t& textureSampler, int index)
 {
+    PROFILER_FUNCTION();
     aiString path;
     aiTextureMapMode mapmode[3] = { aiTextureMapMode_Clamp, aiTextureMapMode_Clamp, aiTextureMapMode_Clamp };
     const bool res = mtlDescriptor->GetTexture(textureType, index, &path, 0, &uvIndex, 0, 0, mapmode) == AI_SUCCESS;
@@ -1642,6 +1744,7 @@ GLTFMaterialDataGPU setupglTFMaterialData(
     const aiMaterial* mtlDescriptor, const char* assetFolder,
     bool& useVolumetric, bool& usedoublesided)
 {
+    PROFILER_FUNCTION();
     GLTFMaterialTextures mat = {};
     uint32_t materialTypeFlags = MaterialType_Invalid;
 
@@ -2027,6 +2130,7 @@ struct SceneReleaser {
 
 void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
 {
+    PROFILER_FUNCTION();
     const aiScene* scene = aiImportFile(gltfName, aiProcess_Triangulate);
     if (!scene || !scene->HasMeshes()) {
         printf("Unable to load %s\n", gltfName);
@@ -2038,7 +2142,6 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
     EnvironmentMapTextures_init(&gltf);
 
     std::vector<Vertex> vertices;
-    std::vector<VertexBoneData> skinningData;
     std::vector<uint32_t> indices;
     std::vector<uint32_t> startVertex;
     std::vector<uint32_t> startIndex;
@@ -2046,6 +2149,7 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
     startVertex.push_back(0);
     startIndex.push_back(0);
 
+    PROFILER_ZONE("mesh loop", PROFILER_COLOR_CREATE);
     // meshes
     for (uint32_t m = 0; m < scene->mNumMeshes; ++m) {
         const aiMesh* mesh = scene->mMeshes[m];
@@ -2066,15 +2170,15 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
                 });
         }
 
-        if (skinningData.empty()) skinningData.resize(vertices.size()); // Ensure size matches
-
         startVertex.push_back((uint32_t)vertices.size());
         for (uint32_t i = 0; i < mesh->mNumFaces; i++) {
             for (int j = 0; j != 3; j++) indices.push_back(mesh->mFaces[i].mIndices[j]);
         }
         startIndex.push_back((uint32_t)indices.size());
     }
+    PROFILER_ZONE_END();
 
+    PROFILER_ZONE("material loop", PROFILER_COLOR_CREATE);
     // mat
     for (unsigned int mtl = 0; mtl < scene->mNumMaterials; ++mtl) {
         const aiMaterial* mtlDescriptor = scene->mMaterials[mtl];
@@ -2085,7 +2189,9 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
              .currentMaterialMask = gltf.matPerFrame.materials[mtl].materialTypeFlags,
             });
     }
+    PROFILER_ZONE_END();
 
+    PROFILER_ZONE("scene building", PROFILER_COLOR_CREATE);
     // nodes
     uint32_t nextMtxId = 0;
     const char* rootName = scene->mRootNode->mName.C_Str();
@@ -2147,7 +2253,9 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
         }
         };
     traverse(scene->mRootNode, gltf.root);
+    PROFILER_ZONE_END();
 
+    PROFILER_ZONE("buffer creation", PROFILER_COLOR_CREATE);
     //buffers
     gltf.maxVertices = vertices.size(); 
 
@@ -2183,7 +2291,15 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
     updateLights(gltf);
 
     create_buffer(vkDev.device, vkDev.physicalDevice, sizeof(GLTFFrameData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, hvProps, gltf.perFrameBuffer.buffer, gltf.perFrameBuffer.memory);
+    PROFILER_ZONE_END();
 
+
+
+   
+    
+
+
+    PROFILER_ZONE("pipeline creation", PROFILER_COLOR_CREATE);
     // pipelines
     VK_CHECK(create_shader_module(vkDev.device, &gltf.vert, "shaders/gltf/main.vert"));
     VK_CHECK(create_shader_module(vkDev.device, &gltf.frag, "shaders/gltf/main.frag"));
@@ -2306,7 +2422,6 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
     transAttachments2[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     transAttachments2[0].alphaBlendOp = VK_BLEND_OP_ADD;
     transAttachments2[0].colorWriteMask = 0xF;
-    // Motion vectors - don't write in pass 2
     transAttachments2[1].blendEnable = VK_FALSE;
     transAttachments2[1].colorWriteMask = 0;
 
@@ -2335,10 +2450,11 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
             .near = c->mClipPlaneNear, .far = c->mClipPlaneFar, .aspect = c->mAspect
             });
     }
-
+ 
 
     //skybox
     {
+
         VK_CHECK(create_shader_module(vkDev.device, &gltf.skyboxVert, "shaders/skybox/skybox.vert"));
         VK_CHECK(create_shader_module(vkDev.device, &gltf.skyboxFrag, "shaders/skybox/skybox.frag"));
 
@@ -2450,15 +2566,15 @@ void loadGLTF(GLTFContext& gltf, const char* gltfName, const char* glTFDataPath)
 
 
         get_cubemap_index(gltf, gltf.envMapTextures.envMapSkybox);
-
-
-
     }
+    PROFILER_ZONE_END();
+
 
 }
 
 void renderEnvironmentCubemap(GLTFContext& gltf, VkCommandBuffer buf, const glm::mat4& proj, const glm::mat4& view)
 {
+    PROFILER_FUNCTION();
     glm::mat4 viewNoTranslation = glm::mat4(glm::mat3(view));
 
     struct SkyboxPC {
@@ -2496,6 +2612,7 @@ void renderGLTF(
     const glm::mat4& proj,
     bool rebuildRenderList)
 {
+    PROFILER_FUNCTION();
     VulkanRenderDevice& vkDev = gltf.app->vkDev;
 
     if (gltf.app->depthTexture.image.image == VK_NULL_HANDLE) {
@@ -2786,6 +2903,7 @@ void renderGLTF(
         drawSelector(&gltf);
         drawGizmo(gltf);
         drawDLSSToggle(gltf.app, gltf);
+        drawFLIPComparison(gltf.app, gltf);
 
         ImGui::Render();
 
@@ -2844,7 +2962,7 @@ void renderGLTF(
 
 void updateCamera(GLTFContext& gltf, const glm::mat4& model, glm::mat4& view, glm::mat4& proj, float aspectRatio)
 {
-
+    PROFILER_FUNCTION();
     if (gltf.inspector->activeCamera == ~0u || gltf.inspector->activeCamera >= gltf.cameras.size())
         return;
 
@@ -2859,6 +2977,7 @@ void updateCamera(GLTFContext& gltf, const glm::mat4& model, glm::mat4& view, gl
 
 void buildTransformsList(GLTFContext& gltf)
 {
+    PROFILER_FUNCTION();
     gltf.transforms.clear();
     gltf.opaqueNodes.clear();
     gltf.transmissionNodes.clear();
@@ -2931,6 +3050,7 @@ void buildTransformsList(GLTFContext& gltf)
 
 void sortTransparentNodes(GLTFContext& gltf, const glm::vec3& cameraPos)
 {
+    PROFILER_FUNCTION();
     // glTF spec expects to sort based on pivot positions (not sure correct way though)
     std::sort(gltf.transparentNodes.begin(), gltf.transparentNodes.end(), [&](uint32_t a, uint32_t b) {
         float sqrDistA = glm::length2(cameraPos - glm::vec3(gltf.matrices[gltf.transforms[a].modelMtxId][3]));
@@ -2942,6 +3062,7 @@ void sortTransparentNodes(GLTFContext& gltf, const glm::vec3& cameraPos)
 
 MaterialType detectMaterialType(const aiMaterial* mtl)
 {
+    PROFILER_FUNCTION();
     aiShadingMode shadingMode = aiShadingMode_NoShading;
 
     if (mtl->Get(AI_MATKEY_SHADING_MODEL, shadingMode) == AI_SUCCESS) {
@@ -3042,6 +3163,7 @@ void printMat4(const aiMatrix4x4& m)
 
 std::vector<std::string> camerasGLTF(GLTFContext& gltf)
 {
+    PROFILER_FUNCTION();
     std::vector<std::string> names;
     names.reserve(gltf.cameras.size() + 1);
 
@@ -3055,7 +3177,7 @@ std::vector<std::string> camerasGLTF(GLTFContext& gltf)
 
 void generate_BRDF_LUT(VulkanRenderDevice& vkDev, const char* outputPath)
 {
-
+    PROFILER_FUNCTION();
     ShaderModule compShader;
     VK_CHECK(create_shader_module(vkDev.device, &compShader, "shaders/LUT/main.comp"));
 
@@ -3207,6 +3329,7 @@ void generate_BRDF_LUT(VulkanRenderDevice& vkDev, const char* outputPath)
 
 void generate_prefiltered_envmap(GLTFContext& gltf, const char* inputHDR, const char* outputGGX, const char* outputCharlie, const char* outputIrradiance)
 {
+    PROFILER_FUNCTION();
     VulkanRenderDevice& vkDev = gltf.app->vkDev;
     
 
@@ -3376,6 +3499,7 @@ void generate_prefiltered_envmap(GLTFContext& gltf, const char* inputHDR, const 
 
 void drawGizmo(GLTFContext& gltf)
 {
+    //PROFILER_FUNCTION();
     if (gltf.selectedNodeIdx < 0 || gltf.selectedNodeIdx >= (int32_t)gltf.nodesStorage.size())
         return;
 
@@ -3483,8 +3607,17 @@ void drawSelector(GLTFContext* gltf)
 
 void drawDLSSToggle(App* app, GLTFContext& gltf)
 {
+    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("DLSS", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+
     if (!dlss_is_available(&app->dlssCtx)) {
         ImGui::TextDisabled("DLSS not available");
+        ImGui::End();
         return;
     }
 
@@ -3497,8 +3630,190 @@ void drawDLSSToggle(App* app, GLTFContext& gltf)
     }
 
     if (gltf.dlssEnabled) {
+        static const DLSSQualityMode modes[] = {
+            DLSSQualityMode::UltraPerformance,
+            DLSSQualityMode::Performance,
+            DLSSQualityMode::Balanced,
+            DLSSQualityMode::Quality,
+            DLSSQualityMode::DLAA,
+        };
+        if (ImGui::BeginCombo("Quality Mode", dlss_quality_mode_to_string(app->dlssMode))) {
+            for (int i = 0; i < 5; i++) {
+                bool selected = (app->dlssMode == modes[i]);
+                if (ImGui::Selectable(dlss_quality_mode_to_string(modes[i]), selected)) {
+                    app->dlssMode = modes[i];
+                    app->dlssInitialized = false;
+                    gltf.dlssNeedsReset = true;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        static const NVSDK_NGX_DLSS_Hint_Render_Preset presets[] = {
+            NVSDK_NGX_DLSS_Hint_Render_Preset_Default,
+            NVSDK_NGX_DLSS_Hint_Render_Preset_F,
+            NVSDK_NGX_DLSS_Hint_Render_Preset_J,
+            NVSDK_NGX_DLSS_Hint_Render_Preset_K,
+            NVSDK_NGX_DLSS_Hint_Render_Preset_L,
+            NVSDK_NGX_DLSS_Hint_Render_Preset_M,
+        };
+        if (ImGui::BeginCombo("Render Preset", dlss_preset_to_string(app->dlssPreset))) {
+            for (int i = 0; i < 6; i++) {
+                bool selected = (app->dlssPreset == presets[i]);
+                if (ImGui::Selectable(dlss_preset_to_string(presets[i]), selected)) {
+                    app->dlssPreset = presets[i];
+                    app->dlssInitialized = false;
+                    gltf.dlssNeedsReset = true;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
         ImGui::Text("Render: %ux%u", gltf.dlssRenderWidth, gltf.dlssRenderHeight);
         ImGui::Text("Output: %ux%u", gltf.displayWidth, gltf.displayHeight);
+    }
+
+    ImGui::End();
+}
+
+void drawFLIPComparison(App* app, GLTFContext& gltf)
+{
+    if (!gltf.flipCtx) return;
+
+    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("FLIP Comparison", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        bool dlssOn = gltf.dlssEnabled && dlss_is_available(&app->dlssCtx);
+
+
+        if (!dlssOn)
+        {
+            if (ImGui::Button("Capture Reference (Native)"))
+            {
+                gltf.flipCaptureReference = true;
+            }
+        }
+        else
+        {
+            ImGui::TextDisabled("Disable DLSS to capture reference");
+        }
+
+        if (gltf.flipCtx->hasReference)
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "(%ux%u)",
+                gltf.flipCtx->refWidth, gltf.flipCtx->refHeight);
+        }
+
+
+        if (dlssOn && gltf.flipCtx->hasReference)
+        {
+            if (ImGui::Button("Capture Test (DLSS) & Compare"))
+            {
+                gltf.flipCaptureTest = true;
+            }
+        }
+        else if (!gltf.flipCtx->hasReference)
+        {
+            ImGui::TextDisabled("Capture reference first");
+        }
+        else
+        {
+            ImGui::TextDisabled("Enable DLSS to capture test");
+        }
+
+
+        if (flip_has_result(gltf.flipCtx))
+        {
+            const FLIPResult* result = flip_get_result(gltf.flipCtx);
+            ImGui::Separator();
+            ImGui::Text("FLIP Results (%ux%u)", result->width, result->height);
+
+            ImGui::Text("Mean Error:  %.4f", result->meanError);
+            ImGui::Text("Max Error:   %.4f", result->maxError);
+            ImGui::Text("Median:      %.4f", result->weightedMedian);
+
+            const char* label = flip_quality_label(result->meanError);
+            ImVec4 labelColor;
+            if (result->meanError < 0.05f)       labelColor = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
+            else if (result->meanError < 0.10f)  labelColor = ImVec4(0.6f, 1.0f, 0.2f, 1.0f);
+            else if (result->meanError < 0.20f)  labelColor = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
+            else if (result->meanError < 0.35f)  labelColor = ImVec4(1.0f, 0.6f, 0.2f, 1.0f);
+            else                                  labelColor = ImVec4(1.0f, 0.2f, 0.2f, 1.0f);
+
+            ImGui::TextColored(labelColor, "Quality: %s", label);
+
+            if (ImGui::Button("Open Viewer"))
+                gltf.flipViewerOpen = true;
+        }
+    }
+    ImGui::End();
+
+    
+    if (gltf.flipViewerOpen)
+    {
+        ImGui::SetNextWindowSize(ImVec2(800, 500), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("FLIP Viewer", &gltf.flipViewerOpen))
+        {
+            if (ImGui::BeginTabBar("FLIPTabs"))
+            {
+                if (ImGui::BeginTabItem("Reference"))
+                {
+                    if (gltf.flipRefDS != VK_NULL_HANDLE)
+                    {
+                        ImVec2 avail = ImGui::GetContentRegionAvail();
+                        float imgAspect = (float)gltf.flipReferenceTex.width / (float)gltf.flipReferenceTex.height;
+                        float fitW = avail.x;
+                        float fitH = avail.x / imgAspect;
+                        if (fitH > avail.y) { fitH = avail.y; fitW = avail.y * imgAspect; }
+                        ImGui::Image((ImTextureID)gltf.flipRefDS, ImVec2(fitW, fitH));
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Not captured yet");
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("DLSS"))
+                {
+                    if (gltf.flipTestDS != VK_NULL_HANDLE)
+                    {
+                        ImVec2 avail = ImGui::GetContentRegionAvail();
+                        float imgAspect = (float)gltf.flipTestTex.width / (float)gltf.flipTestTex.height;
+                        float fitW = avail.x;
+                        float fitH = avail.x / imgAspect;
+                        if (fitH > avail.y) { fitH = avail.y; fitW = avail.y * imgAspect; }
+                        ImGui::Image((ImTextureID)gltf.flipTestDS, ImVec2(fitW, fitH));
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Not captured yet");
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Error Map"))
+                {
+                    if (gltf.flipErrorDS != VK_NULL_HANDLE)
+                    {
+                        ImVec2 avail = ImGui::GetContentRegionAvail();
+                        float imgAspect = (float)gltf.flipErrorMapTex.width / (float)gltf.flipErrorMapTex.height;
+                        float fitW = avail.x;
+                        float fitH = avail.x / imgAspect;
+                        if (fitH > avail.y) { fitH = avail.y; fitW = avail.y * imgAspect; }
+                        ImGui::Image((ImTextureID)gltf.flipErrorDS, ImVec2(fitW, fitH));
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Run comparison first");
+                    }
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
+        }
+        ImGui::End();
     }
 }
 

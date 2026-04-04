@@ -4,16 +4,54 @@
 #include <glm/gtx/rotate_vector.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
 
-
+#include <stb_image.h>
 #include <glfw/glfw3.h>
 
 
 #include <dlss.h>
-
+#include <flip_wrapper.h>
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
+
+static void uploadFlipViewerTexture(VulkanRenderDevice& vkDev, GLTFContext& ctx,
+    VulkanTexture& tex, VkDescriptorSet& ds,
+    const uint8_t* rgba8, uint32_t w, uint32_t h,
+    VkFormat fmt = VK_FORMAT_R8G8B8A8_SRGB)
+{
+    // ensure shared sampler exists
+    if (ctx.flipViewerSampler == VK_NULL_HANDLE)
+    {
+        create_texture_sampler(vkDev.device, &ctx.flipViewerSampler,
+            VK_FILTER_LINEAR, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+    }
+
+    // destroy previous texture if any
+    if (ds != VK_NULL_HANDLE)
+    {
+        ImGui_ImplVulkan_RemoveTexture(ds);
+        ds = VK_NULL_HANDLE;
+    }
+    if (tex.image.image != VK_NULL_HANDLE)
+    {
+        destroy_vulkan_image(vkDev.device, tex.image);
+        tex = {};
+    }
+
+    // create and upload
+    create_texture_image_from_data(vkDev, tex.image.image, tex.image.imageMemory,
+        (void*)rgba8, w, h, fmt);
+    create_image_view(vkDev.device, tex.image.image, fmt,
+        VK_IMAGE_ASPECT_COLOR_BIT, &tex.image.imageView);
+    tex.width = w;
+    tex.height = h;
+    tex.format = fmt;
+
+    // register with ImGui
+    ds = ImGui_ImplVulkan_AddTexture(ctx.flipViewerSampler, tex.image.imageView,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
 
 GLTFContext gltf;
 GLTFIntrospective gltfInspector = {
@@ -61,10 +99,11 @@ int main()
         .engineVersion = "1.0.0",
         .appDataPath = L"D:/out",
     };
+    
 
     init_app(&app, &cfg);
     glfwSetDropCallback(app.window, drop_callback);
-
+   
 
 
 
@@ -74,6 +113,7 @@ int main()
     
    gltf.inspector = &gltfInspector;
    GLTFContext_init(&gltf, &app);
+   gltf.renderSkyboxBackground = false;
 
    init_DLSS_from_app(&app, &cfg);
 /*
@@ -87,7 +127,7 @@ int main()
     
         
         
-    std::string model = "ABeautifulGame";
+    std::string model = "DragonDispersion";
 
     
     std::string gltfPath = "D:/codes/more codes/c++/PBR/data/glTF-Sample-Assets/Models/" + model + "/glTF/" + model + ".gltf";
@@ -155,10 +195,29 @@ run_app(
         
         if (useDLSS && !app->dlssInitialized)
         {
+            vkDeviceWaitIdle(vkDev.device);
+            dlss_release_feature(&app->dlssCtx);
             VkCommandBuffer initCmd = begin_single_time_commands(vkDev);
-            create_DLSS_feature(app, &gltf, initCmd);
+            bool featureOk = create_DLSS_feature(app, &gltf, initCmd);
             end_single_time_commands(vkDev, initCmd);
-            app->dlssInitialized = true;
+            if (!featureOk)
+            {
+                printf("DLSS: feature creation failed, falling back to preset Default\n");
+                app->dlssPreset = NVSDK_NGX_DLSS_Hint_Render_Preset_Default;
+                initCmd = begin_single_time_commands(vkDev);
+                featureOk = create_DLSS_feature(app, &gltf, initCmd);
+                end_single_time_commands(vkDev, initCmd);
+            }
+            if (featureOk)
+            {
+                app->dlssInitialized = true;
+            }
+            else
+            {
+                printf("DLSS: feature creation failed even with default preset, disabling DLSS\n");
+                gltf.dlssEnabled = false;
+                useDLSS = false;
+            }
         }
 
         
@@ -250,8 +309,12 @@ run_app(
                 .reset = gltf.dlssNeedsReset
             };
 
-            dlss_evaluate(&app->dlssCtx, cmd, &evalParams);
+            bool dlssOk = dlss_evaluate(&app->dlssCtx, cmd, &evalParams);
             gltf.dlssNeedsReset = false;
+            if (!dlssOk)
+            {
+                printf("DLSS: evaluate failed, skipping blit\n");
+            }
 
             
             transition_image_layout_cmd(cmd, gltf.dlssColorOutput.image.image, VK_FORMAT_R16G16B16A16_SFLOAT,
@@ -284,12 +347,13 @@ run_app(
             ImGui::NewFrame();
 
             if (gltf.inspector && app->cfg.showGLTFInspector) {
-                draw_GTF_inspector_app(app, *gltf.inspector);
+       //         draw_GTF_inspector_app(app, *gltf.inspector);
             }
             draw_fps(app);
-            drawSelector(&gltf);
-            drawGizmo(gltf);
+         //   drawSelector(&gltf);
+          //  drawGizmo(gltf);
             drawDLSSToggle(app, gltf);
+            drawFLIPComparison(app, gltf);
 
             ImGui::Render();
 
@@ -383,6 +447,111 @@ run_app(
                 app->dlssInitialized = false;
             }
         }
+
+        // FLIP capture readback - runs after render_GLTF has blitted the scene into offscreenTex
+        if (gltf.flipReadbackReference && !useDLSS && gltf.flipCtx)
+        {
+            vkDeviceWaitIdle(vkDev.device);
+
+            uint32_t w = gltf.offscreenTex.width;
+            uint32_t h = gltf.offscreenTex.height;
+            size_t imageSize = static_cast<size_t>(w) * h * 4; // B8G8R8A8
+            std::vector<uint8_t> pixelData(imageSize);
+
+            bool ok = download_image_data(vkDev, gltf.offscreenTex.image.image,
+                w, h, VK_FORMAT_B8G8R8A8_UNORM, 1, pixelData.data(),
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            if (ok)
+            {
+                std::vector<float> floatData = flip_convert_bgra8_to_float(pixelData.data(), w, h);
+                flip_capture_reference(gltf.flipCtx, floatData.data(), w, h);
+
+                // upload reference image for viewer: swizzle BGRA->RGBA, keep as linear UNORM
+                std::vector<uint8_t> rgba8(static_cast<size_t>(w) * h * 4);
+                for (size_t i = 0; i < static_cast<size_t>(w) * h; i++)
+                {
+                    rgba8[i * 4 + 0] = pixelData[i * 4 + 2]; // R <- B
+                    rgba8[i * 4 + 1] = pixelData[i * 4 + 1]; // G
+                    rgba8[i * 4 + 2] = pixelData[i * 4 + 0]; // B <- R
+                    rgba8[i * 4 + 3] = pixelData[i * 4 + 3]; // A
+                }
+                uploadFlipViewerTexture(vkDev, gltf, gltf.flipReferenceTex, gltf.flipRefDS,
+                    rgba8.data(), w, h, VK_FORMAT_R8G8B8A8_UNORM);
+
+                stbi_write_png("flip_native.png", w, h, 4, rgba8.data(), w * 4);
+                printf("FLIP: saved flip_native.png\n");
+            }
+            else
+            {
+                printf("FLIP: failed to readback native frame\n");
+            }
+
+            gltf.flipReadbackReference = false;
+        }
+
+        if (gltf.flipCaptureTest && useDLSS && gltf.flipCtx)
+        {
+            vkDeviceWaitIdle(vkDev.device);
+
+            uint32_t w = gltf.displayWidth;
+            uint32_t h = gltf.displayHeight;
+            size_t imageSize = static_cast<size_t>(w) * h * 4 * sizeof(uint16_t); // R16G16B16A16F
+            std::vector<uint16_t> pixelData(static_cast<size_t>(w) * h * 4);
+
+            bool ok = download_image_data(vkDev, gltf.dlssColorOutput.image.image,
+                w, h, VK_FORMAT_R16G16B16A16_SFLOAT, 1, pixelData.data(),
+                VK_IMAGE_LAYOUT_GENERAL);
+
+            if (ok)
+            {
+                std::vector<float> floatData = flip_convert_rgba16f_to_float(pixelData.data(), w, h);
+                flip_capture_test_and_compare(gltf.flipCtx, floatData.data(), w, h);
+
+                // upload DLSS image for viewer
+                std::vector<uint8_t> rgba8 = flip_float_to_rgba8(floatData.data(), w, h);
+                // force alpha to 255 - DLSS may not write the alpha channel for some presets
+                for (size_t i = 0; i < static_cast<size_t>(w) * h; i++)
+                    rgba8[i * 4 + 3] = 255;
+                uploadFlipViewerTexture(vkDev, gltf, gltf.flipTestTex, gltf.flipTestDS, rgba8.data(), w, h, VK_FORMAT_R8G8B8A8_UNORM);
+
+                {
+                    char filename[128];
+                    snprintf(filename, sizeof(filename), "flip_%s.png", dlss_quality_mode_to_string(app->dlssMode));
+                    for (char* p = filename; *p; p++) { if (*p == ' ') *p = '_'; }
+                    stbi_write_png(filename, w, h, 4, rgba8.data(), w * 4);
+                    printf("FLIP: saved %s\n", filename);
+                }
+
+                // upload error map for viewer (magma colored)
+                if (flip_has_result(gltf.flipCtx))
+                {
+                    const FLIPResult* result = flip_get_result(gltf.flipCtx);
+                    std::vector<uint8_t> magma = flip_error_map_to_magma_rgba8(result->errorMap.data(), result->width, result->height);
+                    uploadFlipViewerTexture(vkDev, gltf, gltf.flipErrorMapTex, gltf.flipErrorDS, magma.data(), result->width, result->height, VK_FORMAT_R8G8B8A8_UNORM);
+
+                    {
+                        char filename[128];
+                        snprintf(filename, sizeof(filename), "flip_errormap_%s.png", dlss_quality_mode_to_string(app->dlssMode));
+                        for (char* p = filename; *p; p++) { if (*p == ' ') *p = '_'; }
+                        stbi_write_png(filename, result->width, result->height, 4, magma.data(), result->width * 4);
+                        printf("FLIP: saved %s\n", filename);
+                    }
+
+                    gltf.flipViewerOpen = true;
+                }
+            }
+            else
+            {
+                printf("FLIP: failed to readback DLSS frame\n");
+            }
+
+            gltf.flipCaptureTest = false;
+        }
+
+        // reset flags if they couldn't be processed (wrong render mode)
+        if (gltf.flipCaptureReference && useDLSS) gltf.flipCaptureReference = false;
+        if (gltf.flipCaptureTest && !useDLSS) gltf.flipCaptureTest = false;
 
         app->currentFrame = (app->currentFrame + 1) % app->inFlightFences.size();
     });

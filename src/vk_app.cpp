@@ -90,6 +90,8 @@ static PFN_vkVoidFunction ImGui_Vulkan_Loader(const char* function_name, void* u
 }
 void init_app(App* app, const AppConfig* cfg)
 {
+	int width, height;
+	PROFILER_FUNCTION(PROFILER_COLOR_CREATE);
 	if (cfg)
 	{
 		app->cfg = *cfg;
@@ -100,13 +102,12 @@ void init_app(App* app, const AppConfig* cfg)
 	}
 
 	init_fps(&app->fpsCounter);
-
 	init_camera_first_person(&app->camera, app->cfg.initialCameraPos, app->cfg.initialCameraTarget, glm::vec3(0.0f, 1.0f, 0.0f));
 
 	
-
-	int width = 1920;
-	int height = 1080;
+	PROFILER_ZONE("window creation", PROFILER_COLOR_CREATE);
+	width = 1920;
+	height = 1080;
 
 	if (!glfwInit()) {
 		throw std::runtime_error("Failed to initialize GLFW");
@@ -118,12 +119,15 @@ void init_app(App* app, const AppConfig* cfg)
 		throw std::runtime_error("Failed to create GLFW window");
 	}
 	app->pipelineSamples = 1;
+	PROFILER_ZONE_END();
 
+	PROFILER_ZONE("vulkan function pointer", PROFILER_COLOR_WAIT);
 	VK_CHECK(volkInitialize());
+	PROFILER_ZONE_END();
 
+	
 
-
-
+	PROFILER_ZONE("query dlss extension", PROFILER_COLOR_WAIT);
 	uint32_t extensionCount;
 	VkExtensionProperties* ngxExts;
 	//NOTE: This took longer than expected, I literally forgot to think for a second because the struct is so convoluted
@@ -149,9 +153,10 @@ void init_app(App* app, const AppConfig* cfg)
 		&featureInfo,
 		&extensionCount,
 		&ngxExts);
+	PROFILER_ZONE_END();
 
 
-
+	PROFILER_ZONE("vk resource creation", PROFILER_COLOR_WAIT);
 	create_instance(&app->vkInstance.instance);
 	volkLoadInstance(app->vkInstance.instance);
 
@@ -214,7 +219,11 @@ void init_app(App* app, const AppConfig* cfg)
 
 	create_swapchain_framebuffers(app);
 	create_sync_objects(app);
+	PROFILER_ZONE_END();
 
+
+
+	PROFILER_ZONE("init imgui", PROFILER_COLOR_CREATE);
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	app->implotCtx = ImPlot::CreateContext();
@@ -222,8 +231,20 @@ void init_app(App* app, const AppConfig* cfg)
 
 	ImGui_ImplGlfw_InitForVulkan(app->window, false);
 
-	if (!create_descriptor_pool(app->vkDev, 100, 100, 100, &app->imguiDescriptorPool)) {
-		throw std::runtime_error("Failed to create ImGui descriptor pool");
+	{
+		VkDescriptorPoolSize poolSizes[] = {
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16 },
+		};
+		VkDescriptorPoolCreateInfo poolInfo = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+			.maxSets = 16,
+			.poolSizeCount = 1,
+			.pPoolSizes = poolSizes,
+		};
+		if (vkCreateDescriptorPool(app->vkDev.device, &poolInfo, nullptr, &app->imguiDescriptorPool) != VK_SUCCESS) {
+			throw std::runtime_error("Failed to create ImGui descriptor pool");
+		}
 	}
 
 	
@@ -254,18 +275,21 @@ void init_app(App* app, const AppConfig* cfg)
 	}
 	ImGui_ImplVulkan_LoadFunctions(api_version, ImGui_Vulkan_Loader, app->vkInstance.instance);
 	ImGui_ImplVulkan_Init(&init_info);
+	PROFILER_ZONE_END();
 
-
+	
+	PROFILER_ZONE("gltw callbacks", PROFILER_COLOR_CREATE);
 	glfwSetWindowUserPointer(app->window, app);
 	glfwSetMouseButtonCallback(app->window, glfw_mouse_button_callback);
 	glfwSetScrollCallback(app->window, glfw_scroll_callback);
 	glfwSetCursorPosCallback(app->window, glfw_cursor_pos_callback);
 	glfwSetKeyCallback(app->window, glfw_key_callback);
+	PROFILER_ZONE_END();
 }
 
 void destroy_app(App* app)
 {
-	
+	PROFILER_FUNCTION(PROFILER_COLOR_DESTROY);
 
 	vkDeviceWaitIdle(app->vkDev.device);
 	ImGui_ImplVulkan_Shutdown();
@@ -352,6 +376,7 @@ void recreate_swapchain(App* app)
 
 void init_DLSS_from_app(App* app, AppConfig* cfg)
 {
+	PROFILER_FUNCTION(PROFILER_COLOR_CREATE);
 	DLSSInitParams initParams =
 	{
 	.instance = &app->vkInstance.instance,
@@ -364,23 +389,25 @@ void init_DLSS_from_app(App* app, AppConfig* cfg)
 	.featuresSearchPathCount= 0,
 	};
 
+	PROFILER_ZONE("dlss init", PROFILER_COLOR_CREATE);
 	if (!dlss_init(&app->dlssCtx, &initParams))
 	{
 		printf("DLSS init failed\n");
 		return;
 	}
+	PROFILER_ZONE_END();
+
 
 	if (!dlss_is_available(&app->dlssCtx))
 	{
 		printf("dlss is not available\n");
 		return;
 	}
-
 	
 	printf("dlss initalized\n");
 }
 
-void create_DLSS_feature(App* app, GLTFContext* gltf, VkCommandBuffer cmd)
+bool create_DLSS_feature(App* app, GLTFContext* gltf, VkCommandBuffer cmd)
 {
 
 	uint32_t displayWidth = app->vkDev.framebufferWidth;
@@ -391,6 +418,7 @@ void create_DLSS_feature(App* app, GLTFContext* gltf, VkCommandBuffer cmd)
 		.targetWidth = displayWidth,
 		.targetHeight= displayHeight,
 		.mode= app->dlssMode,
+		.dlssPreset = app->dlssPreset,
 		.isHDR= false,
 		.motionVectorsLowRes= true,
 		.motionVectorsJittered= false,
@@ -402,29 +430,44 @@ void create_DLSS_feature(App* app, GLTFContext* gltf, VkCommandBuffer cmd)
 	if (!dlss_create_feature(&app->dlssCtx, cmd, &featureParams))
 	{
 		printf("failed to create DLSS feature\n");
-		return;
+		return false;
 	}
 
-	dlss_get_render_resolution(&app->dlssCtx, &gltf->dlssRenderWidth, &gltf->dlssRenderHeight);
+	uint32_t newRenderWidth, newRenderHeight;
+	dlss_get_render_resolution(&app->dlssCtx, &newRenderWidth, &newRenderHeight);
+
+	// only recreate render targets if resolution actually changed or they don't exist
+	bool needsRenderTargets = gltf->dlssColorOutput.image.image == VK_NULL_HANDLE
+		|| newRenderWidth != gltf->dlssRenderWidth
+		|| newRenderHeight != gltf->dlssRenderHeight
+		|| displayWidth != gltf->displayWidth
+		|| displayHeight != gltf->displayHeight;
+
+	gltf->dlssRenderWidth = newRenderWidth;
+	gltf->dlssRenderHeight = newRenderHeight;
 	gltf->displayWidth = displayWidth;
 	gltf->displayHeight = displayHeight;
-	printf("DLSS: Render %ux%u -> Display %ux%u\n",
-		gltf->dlssRenderWidth, gltf->dlssRenderHeight,
-		displayWidth, displayHeight);
-	
-	createDLSSRenderTargets(*gltf, gltf->dlssRenderWidth, gltf->dlssRenderHeight,
-		displayWidth, displayHeight);
+
+	if (needsRenderTargets)
+	{
+		destroyDLSSRenderTargets(*gltf);
+		createDLSSRenderTargets(*gltf, newRenderWidth, newRenderHeight,
+			displayWidth, displayHeight);
+		printf("DLSS: Render targets recreated %ux%u -> %ux%u\n",
+			newRenderWidth, newRenderHeight, displayWidth, displayHeight);
+	}
 
 	printf("DLSS: Render %ux%u -> Display %ux%u\n",
-		gltf->dlssRenderWidth, gltf->dlssRenderHeight,
-		displayWidth, displayHeight);
+		newRenderWidth, newRenderHeight, displayWidth, displayHeight);
 	gltf->dlssEnabled = true;
+	return true;
 }
 
 
 
 void run_app(App* app, DrawFrameFunc drawFrame)
 {
+	PROFILER_FUNCTION(PROFILER_COLOR_PRESENT);
 	
 
 	double timeStamp = glfwGetTime();
